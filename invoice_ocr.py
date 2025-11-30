@@ -1,0 +1,560 @@
+#!/usr/bin/env python3
+"""
+简易发票 OCR 汇总工具
+
+特点：
+- 递归扫描当前目录下的 PDF/图片发票
+- PDF 首页通过 `pdftoppm` 转成 PNG 后送入 Ollama
+- 调用局域网 Ollama deepseek-ocr:latest 提取总金额，并统计合计
+
+使用（仅可选指定扫描路径，默认当前目录；Ollama 地址/模型已写死）：
+  python3 invoice_ocr_sum.py            # 扫描当前目录
+  python3 invoice_ocr_sum.py /path/to/dir
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from pathlib import Path
+from typing import Iterable, List, Tuple, Dict, Optional
+from urllib.error import URLError, HTTPError
+from urllib.request import Request, urlopen
+
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    HAS_OPENPYXL = True
+except ImportError:
+    HAS_OPENPYXL = False
+
+
+@dataclass
+class InvoiceInfo:
+    """发票信息数据类"""
+    invoice_no: str = ""
+    issue_date: str = ""
+    seller: str = ""
+    buyer: str = ""
+    total: float = 0.0
+    tax: float = 0.0
+    subtotal: float = 0.0
+    items: str = ""
+    notes: str = ""
+
+
+DEFAULT_PROMPT = (
+    "你是发票识别专家。请仔细识别图片中的发票，按JSON格式返回数据。\n"
+    "\n"
+    "🔴【最重要】价税合计金额（total）必须准确识别！\n"
+    "这是最核心的字段，仔细查找发票上的「价税合计」或「合计」或「总金额」。\n"
+    "\n"
+    "字段说明：\n"
+    "• total: 价税合计（最重要！查找发票最下方的合计金额。仅数字，如1234.56）\n"
+    "• invoice_no: 发票号码（如00123456）\n"
+    "• issue_date: 开票日期（YYYY-MM-DD，如2024-12-01）\n"
+    "• buyer: 购买方/买方名称（需要准确）\n"
+    "• seller: 供应商/卖方名称\n"
+    "• tax: 税额（仅数字，无则为0）\n"
+    "• subtotal: 小计（仅数字，无则为0）\n"
+    "• items: 商品/服务项目（逗号分隔，最多3个）\n"
+    "• notes: 备注（空即可）\n"
+    "\n"
+    "返回格式（仅返回JSON，无其他内容）：\n"
+    "{\n"
+    '  "invoice_no": "",\n'
+    '  "issue_date": "YYYY-MM-DD",\n'
+    '  "seller": "",\n'
+    '  "buyer": "",\n'
+    '  "total": 0,\n'
+    '  "tax": 0,\n'
+    '  "subtotal": 0,\n'
+    '  "items": "",\n'
+    '  "notes": ""\n'
+    "}\n"
+    "\n"
+    "⚠️ 特别提醒：\n"
+    "1. total 是最关键的字段，必须准确（宁可留空也不要错误的金额）\n"
+    "2. 如果不是发票，返回所有字段为空或0\n"
+    "3. 如某字段无法识别，返回空字符串或0，不要猜测\n"
+    "4. 只返回JSON，不要添加任何说明文字"
+)
+
+OLLAMA_HOST = "192.168.110.XXX"填写你的服务器地址
+OLLAMA_PORT = 11434
+OLLAMA_MODEL = "qwen3-vl:8b"
+
+
+def run_pdftoppm_first_page(pdf_path: Path, tmpdir: Path) -> Path:
+    """将 PDF 的第一页转换成 PNG，并返回图片路径。"""
+    output_prefix = tmpdir / pdf_path.stem
+    cmd = [
+        "pdftoppm",
+        "-png",
+        "-singlefile",
+        "-f",
+        "1",
+        "-l",
+        "1",
+        str(pdf_path),
+        str(output_prefix),
+    ]
+    proc = subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        raise RuntimeError(f"pdftoppm 失败: {proc.stderr.decode('utf-8', 'ignore').strip()}")
+
+    out_png = output_prefix.with_suffix(".png")
+    if not out_png.exists():
+        raise FileNotFoundError(f"pdftoppm 未生成输出文件: {out_png}")
+    return out_png
+
+
+def call_ollama_ocr(
+    image_path: Path,
+    host: str,
+    port: int,
+    model: str,
+    prompt: str,
+    timeout: int = 300,
+) -> str:
+    """调用 Ollama OCR（使用 /api/chat 端点支持视觉模型），返回模型的 response。"""
+    with image_path.open("rb") as f:
+        image_b64 = base64.b64encode(f.read()).decode("ascii")
+
+    # 使用 /api/chat 端点，支持视觉模型
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt,
+                "images": [image_b64],
+            }
+        ],
+        "stream": False,
+    }
+    url = f"http://{host}:{port}/api/chat"
+    req = Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data.get("message", {}).get("content", "")
+    except Exception as e:
+        raise RuntimeError(f"Ollama API 调用失败: {e}")
+
+
+def parse_invoice_info(response_text: str) -> InvoiceInfo:
+    """解析模型返回的JSON文本，提取完整的发票信息。"""
+    info = InvoiceInfo()
+
+    try:
+        data = json.loads(response_text)
+        if isinstance(data, dict):
+            info.invoice_no = str(data.get("invoice_no", "")).strip()
+            info.issue_date = str(data.get("issue_date", "")).strip()
+            info.seller = str(data.get("seller", "")).strip()
+            info.buyer = str(data.get("buyer", "")).strip()
+            info.items = str(data.get("items", "")).strip()
+            info.notes = str(data.get("notes", "")).strip()
+
+            # 解析数值字段
+            for field in ["total", "tax", "subtotal"]:
+                val = data.get(field, 0)
+                if isinstance(val, (int, float)):
+                    setattr(info, field, float(val))
+                elif isinstance(val, str):
+                    try:
+                        setattr(info, field, float(val.replace(",", "").strip() or 0))
+                    except (ValueError, AttributeError):
+                        setattr(info, field, 0.0)
+    except Exception:
+        pass
+
+    return info
+
+
+def iter_invoice_files(root: Path) -> Iterable[Path]:
+    exts = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+    for path in root.rglob("*"):
+        if path.is_file() and path.suffix.lower() in exts:
+            yield path
+
+
+def process_file(path: Path, args) -> Tuple[InvoiceInfo, List[str]]:
+    errors: List[str] = []
+    info = InvoiceInfo()
+
+    try:
+        if path.suffix.lower() == ".pdf":
+            with tempfile.TemporaryDirectory(prefix="invoice_ocr_") as tmp:
+                png = run_pdftoppm_first_page(path, Path(tmp))
+                try:
+                    response = call_ollama_ocr(png, args.host, args.port, args.model, args.prompt)
+                    info = parse_invoice_info(response)
+                except (HTTPError, URLError) as e:
+                    errors.append(f"Ollama 网络错误: {e}")
+                except Exception as e:
+                    errors.append(f"OCR 失败: {e}")
+        else:
+            try:
+                response = call_ollama_ocr(path, args.host, args.port, args.model, args.prompt)
+                info = parse_invoice_info(response)
+            except (HTTPError, URLError) as e:
+                errors.append(f"Ollama 网络错误: {e}")
+            except Exception as e:
+                errors.append(f"OCR 失败: {e}")
+    except Exception as e:
+        errors.append(f"预处理失败: {e}")
+
+    return info, errors
+
+
+def validate_and_analyze(invoices: List[Tuple[Path, InvoiceInfo, List[str]]]) -> Dict:
+    """数据验证和分析。"""
+    analysis = {
+        "total_count": len(invoices),
+        "valid_count": sum(1 for _, info, errs in invoices if info.total > 0 and not errs),
+        "total_amount": sum(info.total for _, info, _ in invoices),
+        "duplicates": [],
+        "warnings": [],
+        "by_month": {},
+        "by_seller": {},
+        "by_amount_range": {"0-1000": 0, "1000-10000": 0, "10000+": 0},
+    }
+
+    # 检查重复发票号
+    invoice_nos = {}
+    for path, info, _ in invoices:
+        if info.invoice_no:
+            if info.invoice_no in invoice_nos:
+                analysis["duplicates"].append(info.invoice_no)
+            invoice_nos[info.invoice_no] = path
+
+    # 按月份统计
+    for path, info, _ in invoices:
+        if info.issue_date:
+            try:
+                month = info.issue_date[:7]  # YYYY-MM
+                if month not in analysis["by_month"]:
+                    analysis["by_month"][month] = {"count": 0, "total": 0.0}
+                analysis["by_month"][month]["count"] += 1
+                analysis["by_month"][month]["total"] += info.total
+            except Exception:
+                pass
+
+    # 按供应商统计
+    for path, info, _ in invoices:
+        if info.seller:
+            seller = info.seller[:20]  # 截断长名称
+            if seller not in analysis["by_seller"]:
+                analysis["by_seller"][seller] = {"count": 0, "total": 0.0}
+            analysis["by_seller"][seller]["count"] += 1
+            analysis["by_seller"][seller]["total"] += info.total
+
+    # 按金额区间统计
+    for path, info, _ in invoices:
+        if info.total > 0:
+            if info.total < 1000:
+                analysis["by_amount_range"]["0-1000"] += 1
+            elif info.total < 10000:
+                analysis["by_amount_range"]["1000-10000"] += 1
+            else:
+                analysis["by_amount_range"]["10000+"] += 1
+
+    # 异常检测
+    if analysis["total_count"] > 0:
+        avg_amount = analysis["total_amount"] / analysis["total_count"]
+        for path, info, errs in invoices:
+            if info.total > 0 and info.total > avg_amount * 3:
+                analysis["warnings"].append(f"{path.name}: 金额 {info.total:.2f} 元（超过平均值3倍）")
+
+    return analysis
+
+
+def generate_excel_report(
+    invoices: List[Tuple[Path, InvoiceInfo, List[str]]],
+    analysis: Dict,
+    output_path: Path
+) -> bool:
+    """生成 Excel 详细报告。"""
+    if not HAS_OPENPYXL:
+        return False
+
+    try:
+        from openpyxl import Workbook
+        wb = Workbook()
+
+        # 工作表1: 详细清单
+        ws_detail = wb.active
+        ws_detail.title = "发票明细"
+
+        headers = ["序号", "文件名", "发票号", "开票日期", "供应商", "购买方", "合计金额", "税额", "小计", "项目", "状态"]
+        ws_detail.append(headers)
+
+        # 样式
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        border = Border(
+            left=Side(style="thin"),
+            right=Side(style="thin"),
+            top=Side(style="thin"),
+            bottom=Side(style="thin")
+        )
+
+        for cell in ws_detail[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.border = border
+
+        for idx, (path, info, errors) in enumerate(invoices, 1):
+            row = [
+                idx,
+                path.name,
+                info.invoice_no,
+                info.issue_date,
+                info.seller[:30],
+                info.buyer[:30],
+                info.total,
+                info.tax,
+                info.subtotal,
+                info.items[:40],
+                "❌ " + errors[0][:30] if errors else "✓ OK",
+            ]
+            ws_detail.append(row)
+
+        # 列宽
+        ws_detail.column_dimensions["A"].width = 8
+        ws_detail.column_dimensions["B"].width = 25
+        ws_detail.column_dimensions["C"].width = 15
+        ws_detail.column_dimensions["D"].width = 12
+        ws_detail.column_dimensions["E"].width = 20
+        ws_detail.column_dimensions["F"].width = 20
+        ws_detail.column_dimensions["G"].width = 12
+        ws_detail.column_dimensions["H"].width = 12
+        ws_detail.column_dimensions["I"].width = 12
+        ws_detail.column_dimensions["J"].width = 30
+        ws_detail.column_dimensions["K"].width = 30
+
+        # 数字格式
+        for row in ws_detail.iter_rows(min_row=2, max_row=len(invoices) + 1, min_col=7, max_col=9):
+            for cell in row:
+                cell.number_format = "0.00"
+                cell.border = border
+
+        # 工作表2: 统计汇总
+        ws_summary = wb.create_sheet("统计汇总")
+        ws_summary.append(["发票统计汇总"])
+        ws_summary.append([])
+        ws_summary.append(["指标", "数值"])
+
+        summary_data = [
+            ["发票总数", analysis["total_count"]],
+            ["有效发票数", analysis["valid_count"]],
+            ["总金额", analysis["total_amount"]],
+            ["平均金额", analysis["total_amount"] / max(analysis["total_count"], 1)],
+            ["重复发票号", len(analysis["duplicates"])],
+        ]
+
+        for row in summary_data:
+            ws_summary.append(row)
+
+        ws_summary.append([])
+        ws_summary.append(["按月份统计"])
+        ws_summary.append(["月份", "数量", "合计"])
+        for month, data in sorted(analysis["by_month"].items()):
+            ws_summary.append([month, data["count"], data["total"]])
+
+        ws_summary.append([])
+        ws_summary.append(["按供应商统计"])
+        ws_summary.append(["供应商", "数量", "合计"])
+        for seller, data in sorted(analysis["by_seller"].items(), key=lambda x: x[1]["total"], reverse=True)[:10]:
+            ws_summary.append([seller, data["count"], data["total"]])
+
+        # 列宽
+        ws_summary.column_dimensions["A"].width = 25
+        ws_summary.column_dimensions["B"].width = 15
+        ws_summary.column_dimensions["C"].width = 15
+
+        wb.save(str(output_path))
+        return True
+    except Exception as e:
+        print(f"[警告] Excel 导出失败: {e}", file=sys.stderr)
+        return False
+
+
+def rename_invoice_files(invoices: List[Tuple[Path, InvoiceInfo, List[str]]], rename: bool = False) -> List[str]:
+    """生成文件重命名建议（格式：金额-购买方名称）。"""
+    rename_ops = []
+    for path, info, errors in invoices:
+        if errors or not info.total or not info.buyer:
+            continue
+
+        # 生成新名称：金额-购买方名称
+        buyer_short = "".join(info.buyer.split())[:15]  # 去空格，截断15字
+        new_name = f"{info.total:.0f}-{buyer_short}{path.suffix}"
+        new_path = path.parent / new_name
+
+        if rename and path != new_path:
+            try:
+                path.rename(new_path)
+                rename_ops.append(f"✓ {path.name} -> {new_name}")
+            except Exception as e:
+                rename_ops.append(f"✗ {path.name}: {e}")
+        else:
+            rename_ops.append(f"→ {path.name} -> {new_name}")
+
+    return rename_ops
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="发票 OCR 智能汇总工具（支持多维度统计分析和文件重命名）")
+    parser.add_argument("root", nargs="?", default=".", help="要扫描的目录，默认当前目录")
+    parser.add_argument("--rename", action="store_true", help="启用文件重命名（金额-供应商格式）")
+    parser.add_argument("--excel", action="store_true", help="生成 Excel 详细报告")
+    args = parser.parse_args()
+
+    root = Path(args.root).resolve()
+    if not root.exists():
+        print(f"[错误] 路径不存在: {root}", file=sys.stderr)
+        return 1
+
+    files = list(iter_invoice_files(root))
+    if not files:
+        print(f"[提示] 在 {root} 下未找到发票文件（PDF/图片）。")
+        return 0
+
+    # 设置 Ollama 配置
+    args.host = OLLAMA_HOST
+    args.port = OLLAMA_PORT
+    args.model = OLLAMA_MODEL
+    args.prompt = DEFAULT_PROMPT
+
+    print(f"共发现 {len(files)} 份发票，开始 OCR ...\n")
+    print(f"Ollama 地址: http://{args.host}:{args.port}  模型: {args.model}\n")
+
+    invoices: List[Tuple[Path, InvoiceInfo, List[str]]] = []
+    for idx, path in enumerate(files, 1):
+        info, errors = process_file(path, args)
+        status = "✓ OK" if not errors else f"⚠ {errors[0][:40]}"
+        print(f"[{idx:03d}] {path.name:<40} -> {info.total:>10.2f} 元  {status}")
+        invoices.append((path, info, errors))
+
+    # 数据分析与验证
+    print("\n" + "=" * 80)
+    analysis = validate_and_analyze(invoices)
+
+    print("📊 统计汇总")
+    print(f"  发票总数：{analysis['total_count']}")
+    print(f"  有效发票：{analysis['valid_count']}")
+    print(f"  总金额：{analysis['total_amount']:.2f} 元")
+    print(f"  平均金额：{analysis['total_amount'] / max(analysis['total_count'], 1):.2f} 元")
+
+    if analysis["duplicates"]:
+        print(f"\n  ⚠ 重复发票号: {', '.join(analysis['duplicates'])}")
+
+    if analysis["warnings"]:
+        print(f"\n⚠ 异常警告（超过平均值3倍）:")
+        for warn in analysis["warnings"]:
+            print(f"  - {warn}")
+
+    # 按金额区间统计
+    print(f"\n💰 按金额区间统计:")
+    for range_key, count in analysis["by_amount_range"].items():
+        print(f"  {range_key} 元: {count} 份")
+
+    # 按月份统计（最近6个月）
+    if analysis["by_month"]:
+        print(f"\n📅 按月份统计:")
+        for month in sorted(analysis["by_month"].keys())[-6:]:
+            data = analysis["by_month"][month]
+            print(f"  {month}: {data['count']} 份，合计 {data['total']:.2f} 元")
+
+    # 按供应商统计（top 10）
+    if analysis["by_seller"]:
+        print(f"\n🏢 按供应商统计（top 10）:")
+        for seller, data in sorted(analysis["by_seller"].items(), key=lambda x: x[1]["total"], reverse=True)[:10]:
+            print(f"  {seller:<20} {data['count']:>3} 份，合计 {data['total']:>10.2f} 元")
+
+    # 生成 Markdown 报告
+    print("\n" + "=" * 80)
+    output_md = root / "invoice_summary.md"
+    lines = [
+        "# 📋 发票 OCR 汇总报告",
+        f"- 🗂️ 扫描目录：`{root}`",
+        f"- 📊 发票数量：{analysis['total_count']} 份",
+        f"- ✅ 有效发票：{analysis['valid_count']} 份",
+        f"- 💰 总金额：**{analysis['total_amount']:.2f} 元**",
+        f"- 📈 平均金额：{analysis['total_amount'] / max(analysis['total_count'], 1):.2f} 元",
+        "",
+        "## 📝 明细表",
+        "| 序号 | 文件 | 发票号 | 日期 | 供应商 | 金额(元) | 状态 |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+
+    for i, (path, info, errors) in enumerate(invoices, 1):
+        rel = path.relative_to(root)
+        status = "✓" if not errors else "✗"
+        lines.append(
+            f"| {i} | `{rel.name}` | {info.invoice_no} | {info.issue_date} | "
+            f"{info.seller[:15]} | {info.total:.2f} | {status} |"
+        )
+
+    if analysis["by_month"]:
+        lines.append("")
+        lines.append("## 📅 按月份统计")
+        lines.append("| 月份 | 数量 | 合计(元) |")
+        lines.append("| --- | --- | --- |")
+        for month in sorted(analysis["by_month"].keys()):
+            data = analysis["by_month"][month]
+            lines.append(f"| {month} | {data['count']} | {data['total']:.2f} |")
+
+    if analysis["by_seller"]:
+        lines.append("")
+        lines.append("## 🏢 按供应商统计（top 10）")
+        lines.append("| 供应商 | 数量 | 合计(元) |")
+        lines.append("| --- | --- | --- |")
+        for seller, data in sorted(analysis["by_seller"].items(), key=lambda x: x[1]["total"], reverse=True)[:10]:
+            lines.append(f"| {seller} | {data['count']} | {data['total']:.2f} |")
+
+    try:
+        output_md.write_text("\n".join(lines), encoding="utf-8")
+        print(f"✅ Markdown 报告: {output_md}")
+    except Exception as e:
+        print(f"❌ Markdown 导出失败: {e}", file=sys.stderr)
+
+    # 生成 Excel 报告（可选）
+    if args.excel or HAS_OPENPYXL:
+        output_xlsx = root / "invoice_summary.xlsx"
+        if generate_excel_report(invoices, analysis, output_xlsx):
+            print(f"✅ Excel 报告: {output_xlsx}")
+        else:
+            print("ℹ️  Excel 库未安装 (openpyxl)，跳过 Excel 导出")
+
+    # 文件重命名建议
+    if len([p for p, i, e in invoices if i.total > 0 and not e]) > 0:
+        print("\n" + "=" * 80)
+        print("📝 文件重命名建议（金额-购买方格式）:")
+        rename_ops = rename_invoice_files(invoices, rename=args.rename)
+        for op in rename_ops[:20]:  # 仅显示前20条
+            print(f"  {op}")
+        if len(rename_ops) > 20:
+            print(f"  ... 还有 {len(rename_ops) - 20} 条")
+
+        if args.rename:
+            print(f"\n✅ 已重命名 {sum(1 for op in rename_ops if op.startswith('✓'))} 份文件")
+
+    print("\n" + "=" * 80)
+    print("✨ 处理完成！")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
