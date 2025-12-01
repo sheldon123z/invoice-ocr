@@ -1,6 +1,8 @@
 #!/bin/bash
 # macOS 打包脚本
 
+set -e  # 遇错退出
+
 echo "🚀 开始打包发票 OCR 应用..."
 
 # 检查依赖
@@ -15,13 +17,25 @@ if ! command -v pdftoppm &> /dev/null; then
     brew install poppler
 fi
 
+# 创建虚拟环境
+VENV_DIR=".venv"
+if [ ! -d "$VENV_DIR" ]; then
+    echo "📦 创建虚拟环境..."
+    python3 -m venv "$VENV_DIR"
+fi
+
+# 激活虚拟环境
+source "$VENV_DIR/bin/activate"
+
 # 安装 Python 依赖
 echo "📦 安装 Python 依赖..."
-/opt/homebrew/bin/python3.13 -m pip install --user -r requirements.txt
+pip install --upgrade pip
+pip install -r requirements.txt
+pip install pyinstaller
 
 # 清理旧的构建文件
 echo "🧹 清理旧的构建文件..."
-rm -rf build dist
+rm -rf build dist *.spec
 
 # 准备打包二进制文件
 echo "📦 准备 pdftoppm 及依赖库..."
@@ -33,14 +47,14 @@ fi
 
 # 打包应用（包含 pdftoppm）
 echo "🔨 打包应用..."
-/opt/homebrew/bin/python3.13 -m PyInstaller --name=InvoiceOCR --windowed \
+python -m PyInstaller --name=InvoiceOCR --windowed \
   --hidden-import=invoice_ocr_sum \
   --hidden-import=invoice_ocr_simple \
   --hidden-import=openpyxl \
   --hidden-import=openpyxl.styles \
   --add-binary="$PDFTOPPM_PATH:bin" \
-  --collect-all=poppler \
   --osx-bundle-identifier=com.invoiceocr.app \
+  --noconfirm \
   invoice_ocr_gui.py
 
 # 手动复制 poppler 库文件
@@ -67,7 +81,8 @@ fi
 # 修复代码签名
 echo "🔏 签名应用..."
 if [ -d "dist/InvoiceOCR.app" ]; then
-    xattr -cr dist/InvoiceOCR.app
+    chmod -R u+w dist/InvoiceOCR.app 2>/dev/null || true
+    xattr -cr dist/InvoiceOCR.app 2>/dev/null || true
     codesign --force --deep --sign - dist/InvoiceOCR.app 2>/dev/null || echo "⚠️  代码签名可选，忽略错误"
 fi
 

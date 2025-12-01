@@ -47,6 +47,7 @@ except ImportError:
 @dataclass
 class InvoiceInfo:
     """发票信息数据类"""
+    # 基本信息
     invoice_no: str = ""
     issue_date: str = ""
     seller: str = ""
@@ -56,6 +57,18 @@ class InvoiceInfo:
     subtotal: float = 0.0
     items: str = ""
     notes: str = ""
+    
+    # 发票分类（新增）
+    invoice_type: str = ""  # special_vat, general_vat, electronic, toll, taxi, train, flight, other
+    invoice_type_name: str = ""  # 类型中文名
+    expense_category: str = ""  # travel, dining, office, transport, telecom, conference, training, service, material, other
+    expense_category_name: str = ""  # 类别中文名
+    
+    # 真伪验证（新增）
+    risk_level: str = ""  # low, medium, high
+    risk_notes: str = ""  # 风险说明
+    has_stamp: bool = True  # 是否有印章
+    image_quality: str = ""  # good, fair, poor
 
 
 DEFAULT_PROMPT = (
@@ -100,6 +113,72 @@ VALIDATE_PROMPT = (
     "如果是发票（增值税发票、普通发票等），返回 {\"is_invoice\": true}\n"
     "如果不是发票（行程单、收据等），返回 {\"is_invoice\": false}\n"
     "不要输出其他任何内容。"
+)
+
+# 发票真伪验证提示词
+VERIFY_INVOICE_PROMPT = (
+    "你是发票审核专家。请仔细检查这张发票的真实性和完整性。\n"
+    "\n"
+    "请检查以下项目并按JSON格式返回：\n"
+    "1. 发票印章是否清晰可见\n"
+    "2. 发票代码和发票号码是否完整\n"
+    "3. 密码区/校验码是否存在（增值税发票）\n"
+    "4. 二维码是否存在（电子发票）\n"
+    "5. 图片质量是否清晰、完整\n"
+    "6. 是否有明显的修改/PS痕迹\n"
+    "7. 金额数字与大写是否一致\n"
+    "\n"
+    "返回格式（仅JSON）：\n"
+    "{\n"
+    '  "risk_level": "low/medium/high",\n'
+    '  "has_stamp": true/false,\n'
+    '  "has_complete_code": true/false,\n'
+    '  "has_qrcode": true/false,\n'
+    '  "image_quality": "good/fair/poor",\n'
+    '  "has_tampering": true/false,\n'
+    '  "amount_consistent": true/false,\n'
+    '  "risk_notes": "具体问题描述（如有）"\n'
+    "}\n"
+    "\n"
+    "风险等级判断标准：\n"
+    "- low: 发票完整、清晰、无异常\n"
+    "- medium: 存在轻微问题（如图片略模糊、部分信息不清晰）\n"
+    "- high: 存在严重问题（无印章、有修改痕迹、金额不一致等）"
+)
+
+# 发票分类提示词
+CLASSIFY_INVOICE_PROMPT = (
+    "请识别这张发票的类型和费用类别，按JSON格式返回。\n"
+    "\n"
+    "发票类型（invoice_type）：\n"
+    "- special_vat: 增值税专用发票\n"
+    "- general_vat: 增值税普通发票\n"
+    "- electronic: 电子发票\n"
+    "- toll: 通行费发票\n"
+    "- taxi: 出租车发票\n"
+    "- train: 火车票\n"
+    "- flight: 机票行程单\n"
+    "- other: 其他类型\n"
+    "\n"
+    "费用类别（expense_category）：\n"
+    "- travel: 差旅\n"
+    "- dining: 餐饮\n"
+    "- office: 办公用品\n"
+    "- transport: 交通\n"
+    "- telecom: 通讯\n"
+    "- conference: 会议\n"
+    "- training: 培训\n"
+    "- service: 服务费\n"
+    "- material: 材料/设备\n"
+    "- other: 其他\n"
+    "\n"
+    "返回格式（仅JSON）：\n"
+    "{\n"
+    '  "invoice_type": "类型代码",\n'
+    '  "invoice_type_name": "类型中文名",\n'
+    '  "expense_category": "类别代码",\n'
+    '  "expense_category_name": "类别中文名"\n'
+    "}"
 )
 
 OLLAMA_HOST = "192.168.110.219"
@@ -276,6 +355,70 @@ def validate_is_invoice(image_path: Path, args) -> bool:
     except Exception:
         # 验证失败时假定为发票，继续处理
         return True
+
+
+def verify_invoice(image_path: Path, args) -> dict:
+    """验证发票真伪和完整性。
+    
+    返回包含风险等级和详细信息的字典。
+    """
+    default_result = {
+        "risk_level": "low",
+        "has_stamp": True,
+        "has_complete_code": True,
+        "has_qrcode": False,
+        "image_quality": "good",
+        "has_tampering": False,
+        "amount_consistent": True,
+        "risk_notes": ""
+    }
+    
+    try:
+        response = call_ollama_ocr(image_path, args.host, args.port, args.model, VERIFY_INVOICE_PROMPT, timeout=90)
+        data = json.loads(response)
+        if isinstance(data, dict):
+            return {
+                "risk_level": data.get("risk_level", "low"),
+                "has_stamp": data.get("has_stamp", True),
+                "has_complete_code": data.get("has_complete_code", True),
+                "has_qrcode": data.get("has_qrcode", False),
+                "image_quality": data.get("image_quality", "good"),
+                "has_tampering": data.get("has_tampering", False),
+                "amount_consistent": data.get("amount_consistent", True),
+                "risk_notes": data.get("risk_notes", "")
+            }
+    except Exception as e:
+        default_result["risk_notes"] = f"验证失败: {str(e)[:50]}"
+    
+    return default_result
+
+
+def classify_invoice(image_path: Path, args) -> dict:
+    """识别发票类型和费用类别。
+    
+    返回包含发票类型和费用类别的字典。
+    """
+    default_result = {
+        "invoice_type": "other",
+        "invoice_type_name": "其他类型",
+        "expense_category": "other",
+        "expense_category_name": "其他"
+    }
+    
+    try:
+        response = call_ollama_ocr(image_path, args.host, args.port, args.model, CLASSIFY_INVOICE_PROMPT, timeout=60)
+        data = json.loads(response)
+        if isinstance(data, dict):
+            return {
+                "invoice_type": data.get("invoice_type", "other"),
+                "invoice_type_name": data.get("invoice_type_name", "其他类型"),
+                "expense_category": data.get("expense_category", "other"),
+                "expense_category_name": data.get("expense_category_name", "其他")
+            }
+    except Exception:
+        pass
+    
+    return default_result
 
 
 def iter_invoice_files(root: Path) -> Iterable[Path]:
@@ -460,7 +603,18 @@ def generate_excel_report(
         ws_detail = wb.active
         ws_detail.title = "发票明细"
 
-        headers = ["序号", "文件名", "发票号", "开票日期", "供应商", "购买方", "合计金额", "税额", "小计", "项目", "状态"]
+        # 检查是否有验证/分类数据
+        has_verify = any(info.risk_level for _, info, _ in invoices)
+        has_classify = any(info.invoice_type for _, info, _ in invoices)
+        
+        # 动态構建表头
+        headers = ["序号", "文件名", "发票号", "开票日期", "供应商", "购买方", "合计金额", "税额", "小计"]
+        if has_classify:
+            headers.extend(["发票类型", "费用类别"])
+        if has_verify:
+            headers.extend(["风险等级", "风险说明"])
+        headers.extend(["项目", "状态"])
+        
         ws_detail.append(headers)
 
         # 样式
@@ -472,6 +626,13 @@ def generate_excel_report(
             top=Side(style="thin"),
             bottom=Side(style="thin")
         )
+        
+        # 风险等级颜色
+        risk_fills = {
+            "high": PatternFill(start_color="FF6B6B", end_color="FF6B6B", fill_type="solid"),
+            "medium": PatternFill(start_color="FFD93D", end_color="FFD93D", fill_type="solid"),
+            "low": PatternFill(start_color="6BCB77", end_color="6BCB77", fill_type="solid"),
+        }
 
         for cell in ws_detail[1]:
             cell.fill = header_fill
@@ -484,28 +645,39 @@ def generate_excel_report(
                 path.name,
                 info.invoice_no,
                 info.issue_date,
-                info.seller[:30],
-                info.buyer[:30],
+                info.seller[:30] if info.seller else "",
+                info.buyer[:30] if info.buyer else "",
                 info.total,
                 info.tax,
                 info.subtotal,
-                info.items[:40],
-                "❌ " + errors[0][:30] if errors else "✓ OK",
             ]
+            if has_classify:
+                row.extend([info.invoice_type_name or "", info.expense_category_name or ""])
+            if has_verify:
+                risk_label = {"": "", "low": "✅ 低风险", "medium": "⚠️ 中风险", "high": "❌ 高风险"}.get(info.risk_level, "")
+                row.extend([risk_label, info.risk_notes or ""])
+            row.extend([
+                info.items[:40] if info.items else "",
+                "❌ " + errors[0][:30] if errors else "✓ OK",
+            ])
             ws_detail.append(row)
+            
+            # 为风险等级单元格添加颜色
+            if has_verify and info.risk_level in risk_fills:
+                risk_col = 10 + (2 if has_classify else 0)  # 风险等级列
+                ws_detail.cell(row=idx + 1, column=risk_col).fill = risk_fills[info.risk_level]
 
-        # 列宽
-        ws_detail.column_dimensions["A"].width = 8
-        ws_detail.column_dimensions["B"].width = 25
-        ws_detail.column_dimensions["C"].width = 15
-        ws_detail.column_dimensions["D"].width = 12
-        ws_detail.column_dimensions["E"].width = 20
-        ws_detail.column_dimensions["F"].width = 20
-        ws_detail.column_dimensions["G"].width = 12
-        ws_detail.column_dimensions["H"].width = 12
-        ws_detail.column_dimensions["I"].width = 12
-        ws_detail.column_dimensions["J"].width = 30
-        ws_detail.column_dimensions["K"].width = 30
+        # 列宽 (使用openpyxl工具函数支持超过26列)
+        from openpyxl.utils import get_column_letter
+        col_widths = [8, 25, 15, 12, 20, 20, 12, 12, 12]
+        if has_classify:
+            col_widths.extend([15, 12])
+        if has_verify:
+            col_widths.extend([12, 30])
+        col_widths.extend([30, 30])
+        
+        for i, width in enumerate(col_widths, 1):
+            ws_detail.column_dimensions[get_column_letter(i)].width = width
 
         # 数字格式
         for row in ws_detail.iter_rows(min_row=2, max_row=len(invoices) + 1, min_col=7, max_col=9):
@@ -541,6 +713,57 @@ def generate_excel_report(
         ws_summary.append(["供应商", "数量", "合计"])
         for seller, data in sorted(analysis["by_seller"].items(), key=lambda x: x[1]["total"], reverse=True)[:10]:
             ws_summary.append([seller, data["count"], data["total"]])
+
+        # 按发票类型统计（如果有分类数据）
+        if has_classify:
+            type_stats = {}
+            for _, info, _ in invoices:
+                if info.invoice_type_name:
+                    if info.invoice_type_name not in type_stats:
+                        type_stats[info.invoice_type_name] = {"count": 0, "total": 0}
+                    type_stats[info.invoice_type_name]["count"] += 1
+                    type_stats[info.invoice_type_name]["total"] += info.total or 0
+            
+            if type_stats:
+                ws_summary.append([])
+                ws_summary.append(["按发票类型统计"])
+                ws_summary.append(["发票类型", "数量", "合计"])
+                for type_name, data in sorted(type_stats.items(), key=lambda x: x[1]["count"], reverse=True):
+                    ws_summary.append([type_name, data["count"], data["total"]])
+
+        # 按费用类别统计（如果有分类数据）
+        if has_classify:
+            category_stats = {}
+            for _, info, _ in invoices:
+                if info.expense_category_name:
+                    if info.expense_category_name not in category_stats:
+                        category_stats[info.expense_category_name] = {"count": 0, "total": 0}
+                    category_stats[info.expense_category_name]["count"] += 1
+                    category_stats[info.expense_category_name]["total"] += info.total or 0
+            
+            if category_stats:
+                ws_summary.append([])
+                ws_summary.append(["按费用类别统计"])
+                ws_summary.append(["费用类别", "数量", "合计"])
+                for cat_name, data in sorted(category_stats.items(), key=lambda x: x[1]["count"], reverse=True):
+                    ws_summary.append([cat_name, data["count"], data["total"]])
+
+        # 按风险等级统计（如果有验证数据）
+        if has_verify:
+            risk_stats = {"low": 0, "medium": 0, "high": 0, "unknown": 0}
+            for _, info, _ in invoices:
+                if info.risk_level in risk_stats:
+                    risk_stats[info.risk_level] += 1
+                elif info.risk_level:
+                    risk_stats["unknown"] += 1
+            
+            ws_summary.append([])
+            ws_summary.append(["按风险等级统计"])
+            ws_summary.append(["风险等级", "数量"])
+            risk_labels = {"low": "✅ 低风险", "medium": "⚠️ 中风险", "high": "❌ 高风险"}
+            for level in ["high", "medium", "low"]:
+                if risk_stats[level] > 0:
+                    ws_summary.append([risk_labels[level], risk_stats[level]])
 
         # 列宽
         ws_summary.column_dimensions["A"].width = 25

@@ -59,6 +59,10 @@ class AppConfig:
     enable_markdown: bool = True
     enable_rename: bool = False
     enable_validate: bool = True
+    
+    # 新增功能配置
+    enable_verify: bool = False  # 发票真伪验证
+    enable_classify: bool = False  # 发票分类
 
 
 class InvoiceOCRApp:
@@ -170,6 +174,27 @@ class InvoiceOCRApp:
             variable=self.markdown_var
         )
         markdown_check.pack(side=tk.LEFT, padx=10)
+        
+        # 新增功能选项（第二行）
+        options_check_frame2 = ttk.Frame(options_frame)
+        options_check_frame2.pack(fill=tk.X, pady=5)
+        
+        self.verify_var = tk.BooleanVar(value=self.config.enable_verify)
+        verify_check = ttk.Checkbutton(
+            options_check_frame2, text="🔍 发票真伪验证", 
+            variable=self.verify_var
+        )
+        verify_check.pack(side=tk.LEFT, padx=10)
+        
+        self.classify_var = tk.BooleanVar(value=self.config.enable_classify)
+        classify_check = ttk.Checkbutton(
+            options_check_frame2, text="🏷️ 发票分类", 
+            variable=self.classify_var
+        )
+        classify_check.pack(side=tk.LEFT, padx=10)
+        
+        # 功能说明标签
+        ttk.Label(options_check_frame2, text="(完整模式生效)", foreground="gray").pack(side=tk.LEFT, padx=5)
         
         # 开始按钮
         btn_frame = ttk.Frame(frame)
@@ -379,6 +404,9 @@ class InvoiceOCRApp:
         self.config.enable_markdown = self.markdown_var.get()
         self.config.enable_rename = self.rename_var.get()
         self.config.enable_validate = self.validate_var.get()
+        # 新增功能配置
+        self.config.enable_verify = self.verify_var.get()
+        self.config.enable_classify = self.classify_var.get()
         # API 提供商
         self.config.provider = self.provider_var.get()
         self.config.ollama_host = self.host_var.get()
@@ -456,7 +484,7 @@ class InvoiceOCRApp:
                 from invoice_ocr_sum import (
                     iter_invoice_files, process_file,
                     validate_and_analyze, generate_excel_report,
-                    rename_invoice_files
+                    rename_invoice_files, verify_invoice, classify_invoice
                 )
                 # 更新全局配置
                 import invoice_ocr_sum
@@ -556,9 +584,56 @@ class InvoiceOCRApp:
                     ))
                     
                     info, errors = process_file(path, args, max_retries=self.config.max_retries)
+                    
+                    # 发票验证功能（可选）
+                    if self.config.enable_verify and info.total > 0:
+                        try:
+                            import tempfile
+                            if path.suffix.lower() == ".pdf":
+                                # PDF需要转换为图片
+                                with tempfile.TemporaryDirectory(prefix="inv_verify_") as tmp:
+                                    from invoice_ocr_sum import run_pdftoppm_first_page
+                                    png_path = run_pdftoppm_first_page(path, Path(tmp))
+                                    verify_result = verify_invoice(png_path, args)
+                            else:
+                                verify_result = verify_invoice(path, args)
+                            
+                            info.risk_level = verify_result.get("risk_level", "low")
+                            info.risk_notes = verify_result.get("risk_notes", "")
+                            info.has_stamp = verify_result.get("has_stamp", True)
+                            info.image_quality = verify_result.get("image_quality", "good")
+                        except Exception as e:
+                            info.risk_notes = f"验证失败: {str(e)[:30]}"
+                    
+                    # 发票分类功能（可选）
+                    if self.config.enable_classify and info.total > 0:
+                        try:
+                            import tempfile
+                            if path.suffix.lower() == ".pdf":
+                                with tempfile.TemporaryDirectory(prefix="inv_class_") as tmp:
+                                    from invoice_ocr_sum import run_pdftoppm_first_page
+                                    png_path = run_pdftoppm_first_page(path, Path(tmp))
+                                    class_result = classify_invoice(png_path, args)
+                            else:
+                                class_result = classify_invoice(path, args)
+                            
+                            info.invoice_type = class_result.get("invoice_type", "other")
+                            info.invoice_type_name = class_result.get("invoice_type_name", "其他类型")
+                            info.expense_category = class_result.get("expense_category", "other")
+                            info.expense_category_name = class_result.get("expense_category_name", "其他")
+                        except Exception:
+                            pass
+                    
                     status = "✓ OK" if not errors else f"⚠ {errors[0][:30]}"
                     
-                    msg = f"[{idx:03d}/{len(files)}] {path.name[:40]:<40} {info.total:>10.2f} 元  {status}"
+                    # 添加风险等级标记
+                    risk_mark = ""
+                    if info.risk_level == "high":
+                        risk_mark = " ⚠️高风险"
+                    elif info.risk_level == "medium":
+                        risk_mark = " ❓中风险"
+                    
+                    msg = f"[{idx:03d}/{len(files)}] {path.name[:40]:<40} {info.total:>10.2f} 元  {status}{risk_mark}"
                     self.message_queue.put(("log", msg))
                     invoices.append((path, info, errors))
                     

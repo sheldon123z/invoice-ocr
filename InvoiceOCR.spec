@@ -1,19 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
-
-datas = []
-binaries = [('/opt/homebrew/bin/pdftoppm', 'bin')]
-hiddenimports = ['invoice_ocr_sum', 'invoice_ocr_simple', 'openpyxl', 'openpyxl.styles']
-tmp_ret = collect_all('poppler')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['invoice_ocr_gui.py'],
     pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    binaries=[('/opt/homebrew/bin/pdftoppm', 'bin')],
+    datas=[],
+    hiddenimports=['invoice_ocr_sum', 'invoice_ocr_simple', 'openpyxl', 'openpyxl.styles'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
