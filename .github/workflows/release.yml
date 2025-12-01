@@ -1,0 +1,139 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # 当推送 v1.0.0 这样的标签时触发
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install system dependencies
+        run: |
+          brew install python-tk@3.13
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build macOS application
+        run: |
+          chmod +x build_mac.sh
+          ./build_mac.sh
+
+      - name: Create DMG (optional)
+        run: |
+          # 如果需要创建 DMG 安装包
+          # brew install create-dmg
+          # create-dmg --volname "Invoice OCR" --window-pos 200 120 --window-size 800 400 InvoiceOCR.dmg dist/InvoiceOCR.app
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: invoice-ocr-macos
+          path: dist/InvoiceOCR.app
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build Windows application
+        run: |
+          .\build_windows.bat
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: invoice-ocr-windows
+          path: dist/InvoiceOCR.exe
+
+  create-release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: invoice-ocr-macos
+          path: ./artifacts/macos
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: invoice-ocr-windows
+          path: ./artifacts/windows
+
+      - name: Create ZIP archives
+        run: |
+          cd artifacts/macos
+          zip -r ../../InvoiceOCR-macOS.zip InvoiceOCR.app
+          cd ../windows
+          zip -r ../../InvoiceOCR-Windows.zip InvoiceOCR.exe
+          cd ../..
+
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            InvoiceOCR-macOS.zip
+            InvoiceOCR-Windows.zip
+          body: |
+            ## Invoice OCR GUI Application - ${{ steps.get_version.outputs.VERSION }}
+
+            ### Features
+            - 发票 OCR 识别 GUI 应用程序
+            - 支持批量处理发票图片
+            - 自动提取发票信息并导出到 Excel
+            - 跨平台支持 (macOS & Windows)
+
+            ### 下载
+            - **macOS**: 下载 `InvoiceOCR-macOS.zip`，解压后运行 `InvoiceOCR.app`
+            - **Windows**: 下载 `InvoiceOCR-Windows.zip`，解压后运行 `InvoiceOCR.exe`
+
+            ### 从源码安装
+            ```bash
+            git clone https://github.com/${{ github.repository }}.git
+            cd invoice-ocr
+            pip install -r requirements.txt
+            python invoice_ocr_gui.py
+            ```
+
+            ### 更新日志
+            请查看完整的更新内容
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
