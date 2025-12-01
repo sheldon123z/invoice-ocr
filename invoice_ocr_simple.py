@@ -57,14 +57,59 @@ OLLAMA_MODEL = "qwen3-vl:8b"
 OCR_PROVIDER = None
 
 
+def get_pdftoppm_path() -> str:
+    """获取 pdftoppm 的路径（支持打包后的应用）"""
+    import os
+    # 尝试多个可能的 pdftoppm 路径
+    possible_paths = [
+        # PyInstaller 打包后的路径
+        os.path.join(getattr(sys, '_MEIPASS', ''), 'bin', 'pdftoppm'),
+        # 如果是 macOS .app bundle
+        os.path.join(os.path.dirname(sys.executable), '..', 'Frameworks', 'bin', 'pdftoppm'),
+        # 系统 PATH
+        "pdftoppm",
+        # Homebrew (M1/M2 Mac)
+        "/opt/homebrew/bin/pdftoppm",
+        # Homebrew (Intel Mac)
+        "/usr/local/bin/pdftoppm",
+    ]
+    
+    for path in possible_paths:
+        if not path:
+            continue
+        try:
+            result = subprocess.run(
+                [path, "-v"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False
+            )
+            if result.returncode == 0 or result.returncode == 99:
+                return path
+        except Exception:
+            continue
+    
+    return None
+
+
 def run_pdftoppm_first_page(pdf_path: Path, tmpdir: Path) -> Path:
-    """将 PDF 第一页转换成 PNG（支持长文件名）。"""
+    """将 PDF 第一页转换成 PNG（支持长文件名和打包后的应用）。"""
+    # 获取 pdftoppm 路径
+    pdftoppm = get_pdftoppm_path()
+    if not pdftoppm:
+        raise RuntimeError(
+            "未找到 pdftoppm 工具。请安装 poppler：\n"
+            "  macOS: brew install poppler\n"
+            "  Linux: sudo apt-get install poppler-utils\n"
+            "  Windows: 下载 poppler-utils"
+        )
+    
     # 使用短标识符避免路径过长
     short_id = hashlib.md5(str(pdf_path).encode()).hexdigest()[:8]
     output_prefix = tmpdir / short_id
 
     cmd = [
-        "pdftoppm",
+        pdftoppm,
         "-png",
         "-singlefile",
         "-f", "1",

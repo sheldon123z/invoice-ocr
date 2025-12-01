@@ -57,11 +57,17 @@ class OllamaProvider(OCRAPIProvider):
 
 
 class VolcengineProvider(OCRAPIProvider):
-    """火山引擎视觉模型 API"""
+    """火山引擎视觉模型 API
+    
+    注意：火山引擎使用 endpoint ID 而不是模型名称
+    在火山方舟控制台创建推理接入点后获得 endpoint ID
+    """
     
     def __init__(self, api_key: str, endpoint: str, model: str = "doubao-vision-pro"):
         self.api_key = api_key
+        # 修复：使用正确的默认endpoint
         self.endpoint = endpoint or "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+        # model 在火山引擎中实际是 endpoint ID
         self.model = model
         
     def call_ocr(self, image_path: Path, prompt: str, timeout: int = 300) -> str:
@@ -70,7 +76,7 @@ class VolcengineProvider(OCRAPIProvider):
         
         # 火山引擎使用 OpenAI 兼容格式
         payload = {
-            "model": self.model,
+            "model": self.model,  # 这里应该是 endpoint ID
             "messages": [
                 {
                     "role": "user",
@@ -97,13 +103,25 @@ class VolcengineProvider(OCRAPIProvider):
         try:
             with urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-            return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if not content:
+                raise RuntimeError(f"火山引擎返回空内容: {data}")
+            return content
+        except HTTPError as e:
+            error_body = e.read().decode("utf-8") if hasattr(e, 'read') else str(e)
+            raise RuntimeError(f"火山引擎 API HTTP错误 {e.code}: {error_body}")
+        except URLError as e:
+            raise RuntimeError(f"火山引擎 API 网络错误: {e.reason}")
         except Exception as e:
-            raise RuntimeError(f"火山引擎 API 调用失败: {e}")
+            raise RuntimeError(f"火山引擎 API 调用失败: {type(e).__name__}: {e}")
 
 
 class OpenRouterProvider(OCRAPIProvider):
-    """OpenRouter 多模型 API"""
+    """OpenRouter 多模型 API
+    
+    支持 400+ 模型，使用 OpenAI 兼容的 API 格式
+    推荐设置 HTTP-Referer 和 X-Title 以在排行榜上显示
+    """
     
     def __init__(self, api_key: str, model: str = "google/gemini-2.0-flash-exp:free"):
         self.api_key = api_key
@@ -113,6 +131,16 @@ class OpenRouterProvider(OCRAPIProvider):
     def call_ocr(self, image_path: Path, prompt: str, timeout: int = 300) -> str:
         with image_path.open("rb") as f:
             image_b64 = base64.b64encode(f.read()).decode("ascii")
+        
+        # 检测图片类型
+        image_suffix = image_path.suffix.lower()
+        mime_type = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.webp': 'image/webp',
+            '.gif': 'image/gif'
+        }.get(image_suffix, 'image/jpeg')
         
         # OpenRouter 使用 OpenAI 兼容格式
         payload = {
@@ -124,18 +152,19 @@ class OpenRouterProvider(OCRAPIProvider):
                         {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}
+                            "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}
                         }
                     ]
                 }
             ]
         }
         
+        # 添加推荐的 headers 以在 OpenRouter 排行榜显示
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
-            "HTTP-Referer": "https://github.com/invoice-ocr",
-            "X-Title": "Invoice OCR"
+            "HTTP-Referer": "https://github.com/sheldon123z/invoice-ocr",
+            "X-Title": "Invoice OCR Tool"
         }
         
         req = Request(self.endpoint,
@@ -145,9 +174,17 @@ class OpenRouterProvider(OCRAPIProvider):
         try:
             with urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-            return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if not content:
+                raise RuntimeError(f"OpenRouter 返回空内容: {data}")
+            return content
+        except HTTPError as e:
+            error_body = e.read().decode("utf-8") if hasattr(e, 'read') else str(e)
+            raise RuntimeError(f"OpenRouter API HTTP错误 {e.code}: {error_body}")
+        except URLError as e:
+            raise RuntimeError(f"OpenRouter API 网络错误: {e.reason}")
         except Exception as e:
-            raise RuntimeError(f"OpenRouter API 调用失败: {e}")
+            raise RuntimeError(f"OpenRouter API 调用失败: {type(e).__name__}: {e}")
 
 
 def create_provider(config: Dict[str, Any]) -> OCRAPIProvider:

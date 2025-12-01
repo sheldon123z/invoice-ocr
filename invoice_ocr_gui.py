@@ -65,7 +65,8 @@ class InvoiceOCRApp:
     def __init__(self, root):
         self.root = root
         self.root.title("发票 OCR 识别工具")
-        self.root.geometry("900x700")
+        # 增大界面尺寸以提供更好的用户体验
+        self.root.geometry("1200x900")
         
         # 加载配置
         self.config = self.load_config()
@@ -321,15 +322,17 @@ class InvoiceOCRApp:
         
         info_text = (
             "📌 使用说明：\n\n"
-            "1. 设置 Ollama 服务器地址和端口\n"
-            "2. 选择要使用的视觉模型（如 qwen3-vl:8b）\n"
-            "3. 配置处理选项和重试次数\n"
-            "4. 点击\"测试连接\"确保服务器可访问\n"
-            "5. 返回\"处理发票\"标签开始识别\n\n"
-            "💡 提示：\n"
+            "1. 选择 API 提供商：Ollama / 火山引擎 / OpenRouter\n"
+            "2. 根据所选提供商配置相应参数：\n"
+            "   - Ollama: 设置服务器地址、端口和模型名\n"
+            "   - 火山引擎: 设置 API Key 和 Endpoint ID（从控制台获取）\n"
+            "   - OpenRouter: 设置 API Key 和模型名（支持 400+ 模型）\n"
+            "3. 点击\"测试连接\"验证配置\n"
+            "4. 返回\"处理发票\"标签开始识别\n\n"
+            "💡 模式选择：\n"
             "- 快速模式：仅识别发票金额，速度快\n"
-            "- 完整模式：提取完整信息，支持统计分析\n"
-            "- 配置会自动保存到本地文件"
+            "- 完整模式：提取完整信息，支持统计分析\n\n"
+            "💾 配置会自动保存到 ~/.invoice_ocr_config.json"
         )
         
         info_label = ttk.Label(info_frame, text=info_text, justify=tk.LEFT)
@@ -401,9 +404,23 @@ class InvoiceOCRApp:
         try:
             root = Path(self.config.scan_directory)
             
-            # 检查连接
-            self.message_queue.put(("log", f"🌐 服务器: {self.config.ollama_host}:{self.config.ollama_port}"))
-            self.message_queue.put(("log", f"🤖 模型: {self.config.ollama_model}"))
+            # 显示当前配置
+            provider_name = {
+                "ollama": "Ollama",
+                "volcengine": "火山引擎",
+                "openrouter": "OpenRouter"
+            }.get(self.config.provider, self.config.provider)
+            
+            self.message_queue.put(("log", f"🔌 API 提供商: {provider_name}"))
+            
+            if self.config.provider == "ollama":
+                self.message_queue.put(("log", f"🌐 服务器: {self.config.ollama_host}:{self.config.ollama_port}"))
+                self.message_queue.put(("log", f"🤖 模型: {self.config.ollama_model}"))
+            elif self.config.provider == "volcengine":
+                self.message_queue.put(("log", f"🔑 Endpoint ID: {self.config.volcengine_model}"))
+            elif self.config.provider == "openrouter":
+                self.message_queue.put(("log", f"🤖 模型: {self.config.openrouter_model}"))
+            
             self.message_queue.put(("log", ""))
             
             # 创建 OCR 提供商

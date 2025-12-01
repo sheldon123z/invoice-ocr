@@ -6,15 +6,16 @@
 
 ## ✨ 特性
 
-- 🖥️ **跨平台**：支持 macOS 和 Windows
+- 🖥️ **跨平台**：支持 macOS、Windows 和 Linux
 - 🎨 **图形界面**：无需命令行，简单易用
 - 🚀 **双模式**：
   - 快速模式：仅识别金额
   - 完整模式：提取详细信息并统计分析
-- ⚙️ **灵活配置**：可自定义 Ollama 服务器地址、端口、模型等
+- 🔌 **多 API 支持**：支持 Ollama、火山引擎和 OpenRouter （400+ 模型）
+- ⚙️ **灵活配置**：可自定义服务器地址、API Key、模型等
 - 📊 **智能分析**：按月份、供应商、金额区间统计
 - 📈 **报告导出**：生成 Markdown 和 Excel 报告
-- 🔄 **自动重命名**：按"金额-购买方"格式重命名文件
+- 🔄 **自动重命名**：按“金额-购买方”格式重命名文件
 
 ## 🚀 快速开始
 
@@ -60,17 +61,31 @@ build_windows.bat
 # 在 dist\InvoiceOCR.exe 找到打包好的应用
 ```
 
+#### Linux
+
+```bash
+# 运行打包脚本
+chmod +x build_linux.sh
+./build_linux.sh
+
+# 打包好的应用在 dist/InvoiceOCR
+# 可以直接运行或复制到系统路径
+```
+
 ## 📖 使用说明
 
-### 1. 配置服务器（首次使用）
+### 1. 配置 API 提供商（首次使用）
 
-1. 打开应用，切换到"⚙️ 设置"标签
-2. 配置 Ollama 服务器信息：
-   - 服务器地址（如：192.168.110.219）
-   - 端口（默认：11434）
-   - 模型（如：qwen3-vl:8b）
-3. 点击"🔌 测试连接"确保服务器可访问
-4. 点击"💾 保存设置"
+1. 打开应用，切换到“⚙️ 设置”标签
+2. 选择 API 提供商：
+   - **Ollama**：本地/局域网服务器
+     - 配置服务器地址、端口和模型名
+   - **火山引擎**：字节跳动的 AI 服务
+     - 需要 API Key 和 Endpoint ID（从火山方舟控制台获取）
+   - **OpenRouter**：聚合 400+ 模型的统一 API
+     - 需要 API Key 和模型名（如 google/gemini-2.0-flash-exp:free）
+3. 点击“🔌 测试连接”验证配置
+4. 点击“💾 保存设置”
 
 ### 2. 处理发票
 
@@ -116,10 +131,14 @@ build_windows.bat
 
 ### 必需
 - Python 3.8+
-- Ollama 服务器（需要支持视觉模型，如 qwen3-vl）
+- 以下之一：
+  - Ollama 服务器（本地/局域网）+ 视觉模型（如 qwen3-vl）
+  - 火山引擎 API Key + Endpoint ID
+  - OpenRouter API Key
 - pdftoppm（处理 PDF）
   - macOS: `brew install poppler`
   - Windows: 下载 poppler-utils
+  - Linux: `sudo apt-get install poppler-utils`
 
 ### 可选
 - openpyxl（Excel 报告功能）
