@@ -273,10 +273,19 @@ class InvoiceOCRApp:
         ttk.Label(or_row1, text="API Key:", width=15).pack(side=tk.LEFT)
         self.or_api_key_var = tk.StringVar(value=self.config.openrouter_api_key)
         ttk.Entry(or_row1, textvariable=self.or_api_key_var, width=40, show="*").pack(side=tk.LEFT, padx=5)
+        
         or_row2 = ttk.Frame(or_frame); or_row2.pack(fill=tk.X, pady=5)
         ttk.Label(or_row2, text="Model:", width=15).pack(side=tk.LEFT)
         self.or_model_var = tk.StringVar(value=self.config.openrouter_model)
-        ttk.Entry(or_row2, textvariable=self.or_model_var, width=40).pack(side=tk.LEFT, padx=5)
+        # 使用Combobox替代Entry
+        self.or_model_combo = ttk.Combobox(or_row2, textvariable=self.or_model_var, width=37, state="normal")
+        self.or_model_combo.pack(side=tk.LEFT, padx=5)
+        # 初始化为当前值，后续可以刷新
+        self.or_model_combo['values'] = [self.config.openrouter_model]
+        
+        # 添加刷新按钮
+        refresh_btn = ttk.Button(or_row2, text="🔄 刷新模型", command=self.refresh_openrouter_models, width=12)
+        refresh_btn.pack(side=tk.LEFT, padx=5)
         
         # 高级设置
         advanced_frame = ttk.LabelFrame(frame, text="高级设置", padding=15)
@@ -642,6 +651,45 @@ class InvoiceOCRApp:
         self.retry_var.set(str(self.config.max_retries))
         messagebox.showinfo("成功", "已恢复默认设置")
         
+    def refresh_openrouter_models(self):
+        """刷新OpenRouter模型列表"""
+        api_key = self.or_api_key_var.get().strip()
+        if not api_key:
+            messagebox.showwarning("警告", "请先输入 OpenRouter API Key")
+            return
+        
+        try:
+            # 显示加载中
+            self.or_model_combo.config(state="disabled")
+            self.root.config(cursor="watch")
+            self.root.update()
+            
+            # 从 ocr_api 导入 OpenRouterProvider
+            from ocr_api import OpenRouterProvider
+            models = OpenRouterProvider.fetch_models(api_key, timeout=15)
+            
+            if not models:
+                messagebox.showinfo("提示", "未找到可用模型")
+                return
+            
+            # 更新下拉框
+            model_ids = [model_id for model_id, _ in models]
+            self.or_model_combo['values'] = model_ids
+            
+            # 如果当前值不在列表中，设置为第一个
+            current_model = self.or_model_var.get()
+            if current_model not in model_ids and model_ids:
+                self.or_model_var.set(model_ids[0])
+            
+            messagebox.showinfo("成功", f"✅ 已加载 {len(models)} 个模型")
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"刷新模型列表失败:\n{str(e)}")
+        finally:
+            # 恢复界面
+            self.or_model_combo.config(state="normal")
+            self.root.config(cursor="")
+    
     def test_connection(self):
         """测试连接"""
         try:

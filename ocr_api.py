@@ -127,6 +127,44 @@ class OpenRouterProvider(OCRAPIProvider):
         self.api_key = api_key
         self.model = model
         self.endpoint = "https://openrouter.ai/api/v1/chat/completions"
+    
+    @staticmethod
+    def fetch_models(api_key: str, timeout: int = 10) -> list:
+        """获取OpenRouter可用模型列表
+        
+        返回格式: [(model_id, model_name), ...]
+        例如: [("google/gemini-2.0-flash-exp:free", "Google: Gemini 2.0 Flash (free)"), ...]
+        """
+        url = "https://openrouter.ai/api/v1/models"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        req = Request(url, headers=headers)
+        
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            
+            models = []
+            for model in data.get("data", []):
+                model_id = model.get("id", "")
+                model_name = model.get("name", model_id)
+                # 只添加支持视觉的模型（有context_length的通常都支持）
+                if model_id and model.get("context_length", 0) > 0:
+                    models.append((model_id, f"{model_name}"))
+            
+            # 按名称排序
+            models.sort(key=lambda x: x[1])
+            return models
+        except HTTPError as e:
+            error_body = e.read().decode("utf-8") if hasattr(e, 'read') else str(e)
+            raise RuntimeError(f"获取OpenRouter模型列表失败 {e.code}: {error_body}")
+        except URLError as e:
+            raise RuntimeError(f"获取OpenRouter模型列表网络错误: {e.reason}")
+        except Exception as e:
+            raise RuntimeError(f"获取OpenRouter模型列表失败: {type(e).__name__}: {e}")
         
     def call_ocr(self, image_path: Path, prompt: str, timeout: int = 300) -> str:
         with image_path.open("rb") as f:
