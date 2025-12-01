@@ -331,6 +331,11 @@ class InvoiceOCRApp:
         try:
             root = Path(self.config.scan_directory)
             
+            # 检查连接
+            self.message_queue.put(("log", f"🌐 服务器: {self.config.ollama_host}:{self.config.ollama_port}"))
+            self.message_queue.put(("log", f"🤖 模型: {self.config.ollama_model}"))
+            self.message_queue.put(("log", ""))
+            
             # 导入必要的模块并设置参数
             if self.config.mode == "simple":
                 from invoice_ocr_simple import (
@@ -527,7 +532,44 @@ class InvoiceOCRApp:
                     messagebox.showwarning("连接成功", "服务器已连接，但未找到模型")
                     
         except Exception as e:
-            messagebox.showerror("连接失败", f"❌ 无法连接到服务器:\n{e}")
+            error_msg = f"❌ 无法连接到服务器:\n\n错误信息:\n{e}\n\n可能的原因：\n"
+            
+            if "No route to host" in str(e) or "Errno 65" in str(e):
+                error_msg += (
+                    "1. 服务器地址不正确或服务器未启动\n"
+                    "2. 防火墙阻止了连接\n"
+                    "3. 设备不在同一网络\n\n"
+                    "解决方法：\n"
+                    "• 检查 Ollama 服务器是否运行\n"
+                    "• 确认服务器地址和端口正确\n"
+                    "• 检查防火墙设置"
+                )
+            elif "timed out" in str(e) or "timeout" in str(e).lower():
+                error_msg += (
+                    "1. 服务器响应过慢\n"
+                    "2. 网络不稳定\n\n"
+                    "解决方法：\n"
+                    "• 检查网络连接\n"
+                    "• 稍后重试"
+                )
+            elif "Connection refused" in str(e) or "Errno 61" in str(e):
+                error_msg += (
+                    "1. Ollama 服务未运行\n"
+                    "2. 端口不正确\n\n"
+                    "解决方法：\n"
+                    "• 在服务器上启动 Ollama\n"
+                    "• 确认端口设置正确（默认 11434）"
+                )
+            else:
+                error_msg += (
+                    "1. 服务器设置错误\n"
+                    "2. 网络连接问题\n\n"
+                    "解决方法：\n"
+                    "• 检查服务器地址和端口\n"
+                    "• 确保 Ollama 服务运行中"
+                )
+            
+            messagebox.showerror("连接失败", error_msg)
             
     def load_config(self) -> AppConfig:
         """加载配置"""
