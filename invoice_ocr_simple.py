@@ -53,6 +53,9 @@ OLLAMA_HOST = "192.168.110.219"
 OLLAMA_PORT = 11434
 OLLAMA_MODEL = "qwen3-vl:8b"
 
+# 统一 OCR Provider（由 GUI 设置）
+OCR_PROVIDER = None
+
 
 def run_pdftoppm_first_page(pdf_path: Path, tmpdir: Path) -> Path:
     """将 PDF 第一页转换成 PNG（支持长文件名）。"""
@@ -81,7 +84,15 @@ def run_pdftoppm_first_page(pdf_path: Path, tmpdir: Path) -> Path:
 
 
 def call_ollama_ocr(image_path: Path, prompt: str, timeout: int = 300) -> str:
-    """调用 Ollama OCR 识别金额。"""
+    """调用 OCR（支持统一 Provider 或 Ollama）"""
+    # 优先使用统一 Provider
+    if OCR_PROVIDER is not None:
+        try:
+            return OCR_PROVIDER.call_ocr(image_path, prompt, timeout)
+        except Exception as e:
+            raise RuntimeError(f"OCR API 调用失败: {e}")
+    
+    # 回退到原有 Ollama 调用
     with image_path.open("rb") as f:
         image_b64 = base64.b64encode(f.read()).decode("ascii")
 

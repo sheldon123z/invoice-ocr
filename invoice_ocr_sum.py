@@ -106,6 +106,9 @@ OLLAMA_HOST = "192.168.110.219"
 OLLAMA_PORT = 11434
 OLLAMA_MODEL = "qwen3-vl:8b"
 
+# 统一 OCR Provider（由 GUI 设置）
+OCR_PROVIDER = None
+
 
 def get_pdftoppm_path() -> str:
     """获取 pdftoppm 的路径（支持打包后的应用）"""
@@ -201,11 +204,18 @@ def call_ollama_ocr(
     prompt: str,
     timeout: int = 300,
 ) -> str:
-    """调用 Ollama OCR（使用 /api/chat 端点支持视觉模型），返回模型的 response。"""
+    """调用 OCR（支持统一 Provider 或 Ollama）"""
+    # 优先使用统一 Provider
+    if OCR_PROVIDER is not None:
+        try:
+            return OCR_PROVIDER.call_ocr(image_path, prompt, timeout)
+        except Exception as e:
+            raise RuntimeError(f"OCR API 调用失败: {e}")
+    
+    # 回退到原有 Ollama 调用
     with image_path.open("rb") as f:
         image_b64 = base64.b64encode(f.read()).decode("ascii")
 
-    # 使用 /api/chat 端点，支持视觉模型
     payload = {
         "model": model,
         "messages": [
