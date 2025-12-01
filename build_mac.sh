@@ -23,21 +23,52 @@ echo "📦 安装 Python 依赖..."
 echo "🧹 清理旧的构建文件..."
 rm -rf build dist
 
-# 打包应用
+# 准备打包二进制文件
+echo "📦 准备 pdftoppm 及依赖库..."
+PDFTOPPM_PATH="/opt/homebrew/bin/pdftoppm"
+if [ ! -f "$PDFTOPPM_PATH" ]; then
+    echo "❌ 未找到 pdftoppm，请先安装: brew install poppler"
+    exit 1
+fi
+
+# 打包应用（包含 pdftoppm）
 echo "🔨 打包应用..."
 /opt/homebrew/bin/python3.13 -m PyInstaller --name=InvoiceOCR --windowed \
   --hidden-import=invoice_ocr_sum \
   --hidden-import=invoice_ocr_simple \
   --hidden-import=openpyxl \
   --hidden-import=openpyxl.styles \
+  --add-binary="$PDFTOPPM_PATH:bin" \
+  --collect-all=poppler \
   --osx-bundle-identifier=com.invoiceocr.app \
   invoice_ocr_gui.py
+
+# 手动复制 poppler 库文件
+echo "📚 复制 poppler 库文件..."
+if [ -d "dist/InvoiceOCR.app" ]; then
+    FRAMEWORKS_DIR="dist/InvoiceOCR.app/Contents/Frameworks"
+    mkdir -p "$FRAMEWORKS_DIR"
+    
+    # 复制 poppler 依赖库
+    if [ -d "/opt/homebrew/opt/poppler/lib" ]; then
+        cp -f /opt/homebrew/opt/poppler/lib/libpoppler*.dylib "$FRAMEWORKS_DIR/" 2>/dev/null || true
+    fi
+    if [ -d "/opt/homebrew/opt/little-cms2/lib" ]; then
+        cp -f /opt/homebrew/opt/little-cms2/lib/liblcms2*.dylib "$FRAMEWORKS_DIR/" 2>/dev/null || true
+    fi
+    
+    # 修复库的 rpath
+    if [ -f "dist/InvoiceOCR.app/Contents/MacOS/bin/pdftoppm" ]; then
+        install_name_tool -add_rpath "@executable_path/../Frameworks" \
+            "dist/InvoiceOCR.app/Contents/MacOS/bin/pdftoppm" 2>/dev/null || true
+    fi
+fi
 
 # 修复代码签名
 echo "🔏 签名应用..."
 if [ -d "dist/InvoiceOCR.app" ]; then
     xattr -cr dist/InvoiceOCR.app
-    codesign --force --deep --sign - dist/InvoiceOCR.app
+    codesign --force --deep --sign - dist/InvoiceOCR.app 2>/dev/null || echo "⚠️  代码签名可选，忽略错误"
 fi
 
 # 检查是否成功

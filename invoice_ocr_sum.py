@@ -107,14 +107,70 @@ OLLAMA_PORT = 11434
 OLLAMA_MODEL = "qwen3-vl:8b"
 
 
+def get_pdftoppm_path() -> str:
+    """获取 pdftoppm 的路径（支持打包后的应用）"""
+    # 尝试多个可能的 pdftoppm 路径
+    possible_paths = [
+        # PyInstaller 打包后的路径 (Frameworks/bin/pdftoppm)
+        os.path.join(getattr(sys, '_MEIPASS', ''), 'bin', 'pdftoppm'),
+        # 如果是 macOS .app bundle
+        os.path.join(os.path.dirname(sys.executable), '..', 'Frameworks', 'bin', 'pdftoppm'),
+        # 系统 PATH
+        "pdftoppm",
+        # Homebrew (M1/M2 Mac)
+        "/opt/homebrew/bin/pdftoppm",
+        # Homebrew (Intel Mac)
+        "/usr/local/bin/pdftoppm",
+    ]
+    
+    for path in possible_paths:
+        if not path:
+            continue
+        try:
+            result = subprocess.run(
+                [path, "-v"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False
+            )
+            if result.returncode == 0 or result.returncode == 99:  # 99 是正常的版本输出码
+                return path
+        except Exception:
+            continue
+    
+    return None
+
+
+def check_pdftoppm() -> bool:
+    """检查 pdftoppm 是否可用"""
+    return get_pdftoppm_path() is not None
+
+
 def run_pdftoppm_first_page(pdf_path: Path, tmpdir: Path) -> Path:
     """将 PDF 的第一页转换成 PNG，并返回图片路径（使用短标识符避免路径过长）。"""
+    # 检查 pdftoppm 是否可用
+    if not check_pdftoppm():
+        raise RuntimeError(
+            "未找到 pdftoppm 工具。请安装 poppler:\n"
+            "  macOS: brew install poppler\n"
+            "  如果使用打包的应用，PDF 文件暂不支持，请转换为图片格式。"
+        )
+    
     # 使用短标识符避免路径过长
     short_id = hashlib.md5(str(pdf_path).encode()).hexdigest()[:8]
     output_prefix = tmpdir / short_id
 
+    # 获取 pdftoppm 路径
+    pdftoppm = get_pdftoppm_path()
+    if not pdftoppm:
+        raise RuntimeError(
+            "未找到 pdftoppm 工具。请安装 poppler:\n"
+            "  macOS: brew install poppler\n"
+            "  如果使用打包的应用，PDF 文件暂不支持，请转换为图片格式。"
+        )
+    
     cmd = [
-        "pdftoppm",
+        pdftoppm,
         "-png",
         "-singlefile",
         "-f",
@@ -124,13 +180,16 @@ def run_pdftoppm_first_page(pdf_path: Path, tmpdir: Path) -> Path:
         str(pdf_path),
         str(output_prefix),
     ]
+    
     proc = subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     if proc.returncode != 0:
-        raise RuntimeError(f"pdftoppm 失败: {proc.stderr.decode('utf-8', 'ignore').strip()}")
-
+        error_msg = proc.stderr.decode('utf-8', 'ignore').strip()
+        raise RuntimeError(f"pdftoppm 转换失败: {error_msg}")
+    
     out_png = output_prefix.with_suffix(".png")
     if not out_png.exists():
         raise FileNotFoundError(f"pdftoppm 未生成输出文件: {out_png}")
+    
     return out_png
 
 
