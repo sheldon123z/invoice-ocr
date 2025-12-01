@@ -17,7 +17,7 @@ fi
 
 # 安装 Python 依赖
 echo "📦 安装 Python 依赖..."
-pip3 install -r requirements.txt
+/opt/homebrew/bin/python3.13 -m pip install --user -r requirements.txt
 
 # 清理旧的构建文件
 echo "🧹 清理旧的构建文件..."
@@ -25,7 +25,20 @@ rm -rf build dist
 
 # 打包应用
 echo "🔨 打包应用..."
-pyinstaller invoice_ocr_gui.spec
+/opt/homebrew/bin/python3.13 -m PyInstaller --name=InvoiceOCR --windowed \
+  --hidden-import=invoice_ocr_sum \
+  --hidden-import=invoice_ocr_simple \
+  --hidden-import=openpyxl \
+  --hidden-import=openpyxl.styles \
+  --osx-bundle-identifier=com.invoiceocr.app \
+  invoice_ocr_gui.py
+
+# 修复代码签名
+echo "🔏 签名应用..."
+if [ -d "dist/InvoiceOCR.app" ]; then
+    xattr -cr dist/InvoiceOCR.app
+    codesign --force --deep --sign - dist/InvoiceOCR.app
+fi
 
 # 检查是否成功
 if [ -d "dist/InvoiceOCR.app" ]; then

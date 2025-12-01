@@ -18,29 +18,33 @@
 
 ## 🚀 快速开始
 
-### 方式一：直接运行（需要 Python）
+### 方式一：使用打包好的应用（推荐）
 
-```bash
-# 1. 安装依赖
-pip install openpyxl
+从 [Releases](https://github.com/sheldon123z/invoice-ocr/releases) 下载对应平台的应用：
+- **macOS**: 下载 `InvoiceOCR-macOS.zip`，解压后运行 `InvoiceOCR.app`
+- **Windows**: 下载 `InvoiceOCR-Windows.zip`，解压后运行 `InvoiceOCR.exe`
 
-# 2. 运行图形界面
-python3 invoice_ocr_gui.py
-```
-
-### 方式二：打包成独立应用
+### 方式二：从源码运行
 
 #### macOS
 
 ```bash
-# 1. 安装打包工具
-pip install pyinstaller openpyxl
+# 1. 设置开发环境（首次）
+./setup_dev.sh
 
-# 2. 运行打包脚本
+# 2. 运行应用
+/opt/homebrew/bin/python3.13 invoice_ocr_gui.py
+```
+
+### 方式三：自己打包应用
+
+#### macOS
+
+```bash
+# 运行打包脚本
 ./build_mac.sh
 
-# 3. 使用应用
-# 在 dist/InvoiceOCR.app 找到打包好的应用
+# 打包好的应用在 dist/InvoiceOCR.app
 ```
 
 #### Windows
