@@ -14,9 +14,6 @@ from dataclasses import dataclass, asdict
 from typing import Optional
 import queue
 
-# 统一 OCR 提供商
-from ocr_api import create_provider
-
 # 导入原有的 OCR 模块
 try:
     from invoice_ocr_sum import (
@@ -40,23 +37,13 @@ except ImportError:
 @dataclass
 class AppConfig:
     """应用配置"""
-    # API 配置
-    provider: str = "ollama"  # ollama | volcengine | openrouter
     ollama_host: str = "192.168.110.219"
     ollama_port: int = 11434
     ollama_model: str = "qwen3-vl:8b"
-    volcengine_api_key: str = ""
-    volcengine_endpoint: str = ""
-    volcengine_model: str = "doubao-vision-pro"
-    openrouter_api_key: str = ""
-    openrouter_model: str = "google/gemini-2.0-flash-exp:free"
-
-    # 其他配置
     max_retries: int = 3
     scan_directory: str = ""
     mode: str = "simple"  # simple 或 full
     enable_excel: bool = True
-    enable_markdown: bool = True
     enable_rename: bool = False
     enable_validate: bool = True
 
@@ -162,13 +149,6 @@ class InvoiceOCRApp:
             variable=self.validate_var
         )
         validate_check.pack(side=tk.LEFT, padx=10)
-
-        self.markdown_var = tk.BooleanVar(value=self.config.enable_markdown)
-        markdown_check = ttk.Checkbutton(
-            options_check_frame, text="生成 Markdown 报告", 
-            variable=self.markdown_var
-        )
-        markdown_check.pack(side=tk.LEFT, padx=10)
         
         # 开始按钮
         btn_frame = ttk.Frame(frame)
@@ -210,17 +190,6 @@ class InvoiceOCRApp:
         """创建设置标签页"""
         frame = self.tab_settings
         
-        # API 提供商设置
-        provider_frame = ttk.LabelFrame(frame, text="API 提供商", padding=15)
-        provider_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        provider_row = ttk.Frame(provider_frame)
-        provider_row.pack(fill=tk.X, pady=5)
-        ttk.Label(provider_row, text="提供商:", width=15).pack(side=tk.LEFT)
-        self.provider_var = tk.StringVar(value=self.config.provider)
-        provider_combo = ttk.Combobox(provider_row, textvariable=self.provider_var, values=("ollama","volcengine","openrouter"), state="readonly", width=20)
-        provider_combo.pack(side=tk.LEFT, padx=5)
-
         # Ollama 服务器设置
         server_frame = ttk.LabelFrame(frame, text="Ollama 服务器设置", padding=15)
         server_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -248,34 +217,6 @@ class InvoiceOCRApp:
         self.model_var = tk.StringVar(value=self.config.ollama_model)
         model_entry = ttk.Entry(model_frame, textvariable=self.model_var, width=40)
         model_entry.pack(side=tk.LEFT, padx=5)
-
-        # 火山引擎设置
-        volc_frame = ttk.LabelFrame(frame, text="火山引擎 (Volcengine)", padding=15)
-        volc_frame.pack(fill=tk.X, padx=10, pady=10)
-        volc_row1 = ttk.Frame(volc_frame); volc_row1.pack(fill=tk.X, pady=5)
-        ttk.Label(volc_row1, text="API Key:", width=15).pack(side=tk.LEFT)
-        self.volc_api_key_var = tk.StringVar(value=self.config.volcengine_api_key)
-        ttk.Entry(volc_row1, textvariable=self.volc_api_key_var, width=40, show="*").pack(side=tk.LEFT, padx=5)
-        volc_row2 = ttk.Frame(volc_frame); volc_row2.pack(fill=tk.X, pady=5)
-        ttk.Label(volc_row2, text="Endpoint:", width=15).pack(side=tk.LEFT)
-        self.volc_endpoint_var = tk.StringVar(value=self.config.volcengine_endpoint)
-        ttk.Entry(volc_row2, textvariable=self.volc_endpoint_var, width=40).pack(side=tk.LEFT, padx=5)
-        volc_row3 = ttk.Frame(volc_frame); volc_row3.pack(fill=tk.X, pady=5)
-        ttk.Label(volc_row3, text="Model:", width=15).pack(side=tk.LEFT)
-        self.volc_model_var = tk.StringVar(value=self.config.volcengine_model)
-        ttk.Entry(volc_row3, textvariable=self.volc_model_var, width=40).pack(side=tk.LEFT, padx=5)
-
-        # OpenRouter 设置
-        or_frame = ttk.LabelFrame(frame, text="OpenRouter", padding=15)
-        or_frame.pack(fill=tk.X, padx=10, pady=10)
-        or_row1 = ttk.Frame(or_frame); or_row1.pack(fill=tk.X, pady=5)
-        ttk.Label(or_row1, text="API Key:", width=15).pack(side=tk.LEFT)
-        self.or_api_key_var = tk.StringVar(value=self.config.openrouter_api_key)
-        ttk.Entry(or_row1, textvariable=self.or_api_key_var, width=40, show="*").pack(side=tk.LEFT, padx=5)
-        or_row2 = ttk.Frame(or_frame); or_row2.pack(fill=tk.X, pady=5)
-        ttk.Label(or_row2, text="Model:", width=15).pack(side=tk.LEFT)
-        self.or_model_var = tk.StringVar(value=self.config.openrouter_model)
-        ttk.Entry(or_row2, textvariable=self.or_model_var, width=40).pack(side=tk.LEFT, padx=5)
         
         # 高级设置
         advanced_frame = ttk.LabelFrame(frame, text="高级设置", padding=15)
@@ -364,19 +305,8 @@ class InvoiceOCRApp:
         self.config.scan_directory = directory
         self.config.mode = self.mode_var.get()
         self.config.enable_excel = self.excel_var.get()
-        self.config.enable_markdown = self.markdown_var.get()
         self.config.enable_rename = self.rename_var.get()
         self.config.enable_validate = self.validate_var.get()
-        # API 提供商
-        self.config.provider = self.provider_var.get()
-        self.config.ollama_host = self.host_var.get()
-        self.config.ollama_port = int(self.port_var.get())
-        self.config.ollama_model = self.model_var.get()
-        self.config.volcengine_api_key = self.volc_api_key_var.get()
-        self.config.volcengine_endpoint = self.volc_endpoint_var.get()
-        self.config.volcengine_model = self.volc_model_var.get()
-        self.config.openrouter_api_key = self.or_api_key_var.get()
-        self.config.openrouter_model = self.or_model_var.get()
         
         # 更新界面状态
         self.processing = True
@@ -406,9 +336,6 @@ class InvoiceOCRApp:
             self.message_queue.put(("log", f"🤖 模型: {self.config.ollama_model}"))
             self.message_queue.put(("log", ""))
             
-            # 创建 OCR 提供商
-            provider = create_provider(asdict(self.config))
-
             # 导入必要的模块并设置参数
             if self.config.mode == "simple":
                 from invoice_ocr_simple import (
@@ -417,15 +344,9 @@ class InvoiceOCRApp:
                 )
                 # 更新全局配置
                 import invoice_ocr_simple
-                # 兼容原有参数
                 invoice_ocr_simple.OLLAMA_HOST = self.config.ollama_host
                 invoice_ocr_simple.OLLAMA_PORT = self.config.ollama_port
                 invoice_ocr_simple.OLLAMA_MODEL = self.config.ollama_model
-                # 使用统一 Provider
-                try:
-                    invoice_ocr_simple.OCR_PROVIDER = provider
-                except Exception:
-                    pass
             else:
                 from invoice_ocr_sum import (
                     iter_invoice_files, process_file,
@@ -437,10 +358,6 @@ class InvoiceOCRApp:
                 invoice_ocr_sum.OLLAMA_HOST = self.config.ollama_host
                 invoice_ocr_sum.OLLAMA_PORT = self.config.ollama_port
                 invoice_ocr_sum.OLLAMA_MODEL = self.config.ollama_model
-                try:
-                    invoice_ocr_sum.OCR_PROVIDER = provider
-                except Exception:
-                    pass
             
             # 扫描文件
             files = list(iter_invoice_files(root))
@@ -481,29 +398,6 @@ class InvoiceOCRApp:
                 self.message_queue.put(("log", f"  发票总数：{len(files)}"))
                 self.message_queue.put(("log", f"  成功识别：{success_count}"))
                 self.message_queue.put(("log", f"  💰 总金额：{grand_total:.2f} 元"))
-                # 生成 Markdown 报告（快速模式）
-                if self.config.enable_markdown:
-                    try:
-                        output_md = root / "invoice_summary.md"
-                        lines = [
-                            "# 📋 发票 OCR 汇总报告 (快速模式)",
-                            f"- 🗂️ 扫描目录：`{root}`",
-                            f"- 📊 发票数量：{len(files)} 份",
-                            f"- ✅ 成功识别：{success_count} 份",
-                            f"- 💰 总金额：**{grand_total:.2f} 元**",
-                            "",
-                            "## 📝 明细表",
-                            "| 序号 | 文件 | 金额(元) | 状态 |",
-                            "| --- | --- | --- | --- |",
-                        ]
-                        # 重新遍历生成明细（简单起见，记录在日志中无法直接复用）
-                        for i, path in enumerate(files, 1):
-                            # 不重复调用 OCR，这里只展示文件列表
-                            lines.append(f"| {i} | `{path.name}` | - | - |")
-                        output_md.write_text("\n".join(lines), encoding="utf-8")
-                        self.message_queue.put(("log", f"\n✅ Markdown 报告: {output_md}"))
-                    except Exception as e:
-                        self.message_queue.put(("log", f"\n⚠️ Markdown 导出失败: {e}"))
                 self.message_queue.put(("log", "=" * 80))
                 
             else:
@@ -594,15 +488,9 @@ class InvoiceOCRApp:
     def save_settings(self):
         """保存设置"""
         try:
-            self.config.provider = self.provider_var.get()
             self.config.ollama_host = self.host_var.get()
             self.config.ollama_port = int(self.port_var.get())
             self.config.ollama_model = self.model_var.get()
-            self.config.volcengine_api_key = self.volc_api_key_var.get()
-            self.config.volcengine_endpoint = self.volc_endpoint_var.get()
-            self.config.volcengine_model = self.volc_model_var.get()
-            self.config.openrouter_api_key = self.or_api_key_var.get()
-            self.config.openrouter_model = self.or_model_var.get()
             self.config.max_retries = int(self.retry_var.get())
             
             self.save_config()
@@ -613,50 +501,38 @@ class InvoiceOCRApp:
     def reset_settings(self):
         """恢复默认设置"""
         self.config = AppConfig()
-        self.provider_var.set(self.config.provider)
         self.host_var.set(self.config.ollama_host)
         self.port_var.set(str(self.config.ollama_port))
         self.model_var.set(self.config.ollama_model)
-        self.volc_api_key_var.set(self.config.volcengine_api_key)
-        self.volc_endpoint_var.set(self.config.volcengine_endpoint)
-        self.volc_model_var.set(self.config.volcengine_model)
-        self.or_api_key_var.set(self.config.openrouter_api_key)
-        self.or_model_var.set(self.config.openrouter_model)
         self.retry_var.set(str(self.config.max_retries))
         messagebox.showinfo("成功", "已恢复默认设置")
         
     def test_connection(self):
-        """测试连接"""
+        """测试 Ollama 连接"""
         try:
-            provider = self.provider_var.get()
-            if provider == 'ollama':
-                import urllib.request
-                import json
-                host = self.host_var.get()
-                port = self.port_var.get()
-                url = f"http://{host}:{port}/api/tags"
-                req = urllib.request.Request(url)
-                with urllib.request.urlopen(req, timeout=5) as response:
-                    data = json.loads(response.read().decode('utf-8'))
-                    models = [m.get('name', '') for m in data.get('models', [])]
-                    if models:
-                        messagebox.showinfo("连接成功", f"✅ 已连接到 Ollama 服务器\n\n可用模型：\n" + "\n".join(models[:10]))
-                    else:
-                        messagebox.showwarning("连接成功", "服务器已连接，但未找到模型")
-            elif provider == 'volcengine':
-                ok = bool(self.volc_api_key_var.get())
-                if ok:
-                    messagebox.showinfo("检查完成", "✅ 已检测到火山引擎 API Key（未实际调用）")
+            import urllib.request
+            import json
+            
+            host = self.host_var.get()
+            port = self.port_var.get()
+            
+            url = f"http://{host}:{port}/api/tags"
+            req = urllib.request.Request(url)
+            
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                models = [m.get('name', '') for m in data.get('models', [])]
+                
+                if models:
+                    messagebox.showinfo(
+                        "连接成功", 
+                        f"✅ 已连接到 Ollama 服务器\n\n可用模型：\n" + "\n".join(models[:10])
+                    )
                 else:
-                    messagebox.showwarning("检查失败", "请填写火山引擎 API Key")
-            else:
-                ok = bool(self.or_api_key_var.get())
-                if ok:
-                    messagebox.showinfo("检查完成", "✅ 已检测到 OpenRouter API Key（未实际调用）")
-                else:
-                    messagebox.showwarning("检查失败", "请填写 OpenRouter API Key")
+                    messagebox.showwarning("连接成功", "服务器已连接，但未找到模型")
+                    
         except Exception as e:
-            messagebox.showerror("连接失败", f"❌ 无法连接到服务器:\n{e}")
+            error_msg = f"❌ 无法连接到服务器:\n\n错误信息:\n{e}\n\n可能的原因：\n"
             
             if "No route to host" in str(e) or "Errno 65" in str(e):
                 error_msg += (
