@@ -58,16 +58,17 @@ class OllamaProvider(OCRAPIProvider):
 
 class VolcengineProvider(OCRAPIProvider):
     """火山引擎视觉模型 API
-    
-    注意：火山引擎使用 endpoint ID 而不是模型名称
+
+    注意：火山引擎使用 endpoint ID（如 ep-xxx）而不是模型名称
     在火山方舟控制台创建推理接入点后获得 endpoint ID
+    API URL 是固定的：https://ark.cn-beijing.volces.com/api/v3/chat/completions
     """
-    
-    def __init__(self, api_key: str, endpoint: str, model: str = "doubao-vision-pro"):
+
+    def __init__(self, api_key: str, model: str):
         self.api_key = api_key
-        # 修复：使用正确的默认endpoint
-        self.endpoint = endpoint or "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
-        # model 在火山引擎中实际是 endpoint ID
+        # 火山引擎 API URL 是固定的
+        self.endpoint = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+        # model 实际是推理接入点 ID（如 ep-20251111222944-wtl8h）
         self.model = model
         
     def call_ocr(self, image_path: Path, prompt: str, timeout: int = 300) -> str:
@@ -238,8 +239,7 @@ def create_provider(config: Dict[str, Any]) -> OCRAPIProvider:
     elif provider_type == "volcengine":
         return VolcengineProvider(
             api_key=config.get("volcengine_api_key", ""),
-            endpoint=config.get("volcengine_endpoint", ""),
-            model=config.get("volcengine_model", "doubao-vision-pro")
+            model=config.get("volcengine_model", "")
         )
     elif provider_type == "openrouter":
         return OpenRouterProvider(

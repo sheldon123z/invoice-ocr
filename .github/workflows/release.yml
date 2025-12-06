@@ -20,17 +20,36 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          brew install python-tk@3.13
+          brew install poppler python-tk@3.13
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pyinstaller
 
       - name: Build macOS application
         run: |
-          chmod +x build_mac.sh
-          ./build_mac.sh
+          # 获取 pdftoppm 路径（GitHub Actions 使用 Intel Mac）
+          PDFTOPPM_PATH=$(which pdftoppm)
+          echo "Found pdftoppm at: $PDFTOPPM_PATH"
+
+          # 直接使用 pyinstaller 打包
+          python -m PyInstaller --name=InvoiceOCR --windowed \
+            --hidden-import=invoice_ocr_sum \
+            --hidden-import=invoice_ocr_simple \
+            --hidden-import=openpyxl \
+            --hidden-import=openpyxl.styles \
+            --add-binary="$PDFTOPPM_PATH:bin" \
+            --osx-bundle-identifier=com.invoiceocr.app \
+            --noconfirm \
+            invoice_ocr_gui.py
+
+          # 签名应用
+          if [ -d "dist/InvoiceOCR.app" ]; then
+            xattr -cr dist/InvoiceOCR.app 2>/dev/null || true
+            codesign --force --deep --sign - dist/InvoiceOCR.app 2>/dev/null || true
+          fi
 
       - name: Create DMG (optional)
         run: |
@@ -59,10 +78,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pyinstaller
 
       - name: Build Windows application
         run: |
-          .\build_windows.bat
+          pyinstaller InvoiceOCR_windows.spec
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

@@ -95,12 +95,14 @@ if [ -d "dist/InvoiceOCR.app" ]; then
     echo "  1. 双击 dist/InvoiceOCR.app 运行"
     echo "  2. 或拖拽到\"应用程序\"文件夹"
     echo ""
-    
-    # 可选：打开应用所在目录
-    read -p "是否打开应用所在目录？(y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        open dist
+
+    # 非 CI 环境下可选打开应用所在目录
+    if [ -z "$CI" ] && [ -t 0 ]; then
+        read -p "是否打开应用所在目录？(y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            open dist
+        fi
     fi
 else
     echo "❌ 打包失败，请检查错误信息"

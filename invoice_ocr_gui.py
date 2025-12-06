@@ -46,8 +46,7 @@ class AppConfig:
     ollama_port: int = 11434
     ollama_model: str = "qwen3-vl:8b"
     volcengine_api_key: str = ""
-    volcengine_endpoint: str = ""
-    volcengine_model: str = "doubao-vision-pro"
+    volcengine_model: str = ""  # 火山引擎接入点 ID（如 ep-xxx）
     openrouter_api_key: str = ""
     openrouter_model: str = "google/gemini-2.0-flash-exp:free"
 
@@ -208,12 +207,18 @@ class InvoiceOCRApp:
         self.start_btn.pack(side=tk.LEFT, padx=5)
         
         self.stop_btn = ttk.Button(
-            btn_frame, text="⏹ 停止", 
+            btn_frame, text="⏹ 停止",
             command=self.stop_processing,
             state=tk.DISABLED
         )
         self.stop_btn.pack(side=tk.LEFT, padx=5)
-        
+
+        self.clear_btn = ttk.Button(
+            btn_frame, text="🗑 清除日志",
+            command=self.clear_log
+        )
+        self.clear_btn.pack(side=tk.LEFT, padx=5)
+
         # 进度条
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(
@@ -283,13 +288,10 @@ class InvoiceOCRApp:
         self.volc_api_key_var = tk.StringVar(value=self.config.volcengine_api_key)
         ttk.Entry(volc_row1, textvariable=self.volc_api_key_var, width=40, show="*").pack(side=tk.LEFT, padx=5)
         volc_row2 = ttk.Frame(volc_frame); volc_row2.pack(fill=tk.X, pady=5)
-        ttk.Label(volc_row2, text="Endpoint:", width=15).pack(side=tk.LEFT)
-        self.volc_endpoint_var = tk.StringVar(value=self.config.volcengine_endpoint)
-        ttk.Entry(volc_row2, textvariable=self.volc_endpoint_var, width=40).pack(side=tk.LEFT, padx=5)
-        volc_row3 = ttk.Frame(volc_frame); volc_row3.pack(fill=tk.X, pady=5)
-        ttk.Label(volc_row3, text="Model:", width=15).pack(side=tk.LEFT)
+        ttk.Label(volc_row2, text="接入点 ID:", width=15).pack(side=tk.LEFT)
         self.volc_model_var = tk.StringVar(value=self.config.volcengine_model)
-        ttk.Entry(volc_row3, textvariable=self.volc_model_var, width=40).pack(side=tk.LEFT, padx=5)
+        ttk.Entry(volc_row2, textvariable=self.volc_model_var, width=40).pack(side=tk.LEFT, padx=5)
+        ttk.Label(volc_row2, text="(如 ep-xxx)", foreground="gray").pack(side=tk.LEFT, padx=5)
 
         # OpenRouter 设置
         or_frame = ttk.LabelFrame(frame, text="OpenRouter", padding=15)
@@ -413,7 +415,6 @@ class InvoiceOCRApp:
         self.config.ollama_port = int(self.port_var.get())
         self.config.ollama_model = self.model_var.get()
         self.config.volcengine_api_key = self.volc_api_key_var.get()
-        self.config.volcengine_endpoint = self.volc_endpoint_var.get()
         self.config.volcengine_model = self.volc_model_var.get()
         self.config.openrouter_api_key = self.or_api_key_var.get()
         self.config.openrouter_model = self.or_model_var.get()
@@ -435,7 +436,12 @@ class InvoiceOCRApp:
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.log("⏹ 处理已停止")
-        
+
+    def clear_log(self):
+        """清除日志"""
+        self.log_text.delete(1.0, tk.END)
+        self.progress_var.set(0)
+
     def process_invoices(self):
         """处理发票（在后台线程中运行）"""
         try:
@@ -471,15 +477,12 @@ class InvoiceOCRApp:
                 )
                 # 更新全局配置
                 import invoice_ocr_simple
-                # 兼容原有参数
+                # 兼容原有参数（Ollama 回退用）
                 invoice_ocr_simple.OLLAMA_HOST = self.config.ollama_host
                 invoice_ocr_simple.OLLAMA_PORT = self.config.ollama_port
                 invoice_ocr_simple.OLLAMA_MODEL = self.config.ollama_model
-                # 使用统一 Provider
-                try:
-                    invoice_ocr_simple.OCR_PROVIDER = provider
-                except Exception:
-                    pass
+                # 设置统一 Provider
+                invoice_ocr_simple.OCR_PROVIDER = provider
             else:
                 from invoice_ocr_sum import (
                     iter_invoice_files, process_file,
@@ -488,13 +491,12 @@ class InvoiceOCRApp:
                 )
                 # 更新全局配置
                 import invoice_ocr_sum
+                # 兼容原有参数（Ollama 回退用）
                 invoice_ocr_sum.OLLAMA_HOST = self.config.ollama_host
                 invoice_ocr_sum.OLLAMA_PORT = self.config.ollama_port
                 invoice_ocr_sum.OLLAMA_MODEL = self.config.ollama_model
-                try:
-                    invoice_ocr_sum.OCR_PROVIDER = provider
-                except Exception:
-                    pass
+                # 设置统一 Provider
+                invoice_ocr_sum.OCR_PROVIDER = provider
             
             # 扫描文件
             files = list(iter_invoice_files(root))
@@ -504,9 +506,7 @@ class InvoiceOCRApp:
                 return
                 
             self.message_queue.put(("log", f"✅ 发现 {len(files)} 份发票文件"))
-            self.message_queue.put(("log", f"🔧 模式: {self.config.mode}"))
-            self.message_queue.put(("log", f"🌐 服务器: {self.config.ollama_host}:{self.config.ollama_port}"))
-            self.message_queue.put(("log", f"🤖 模型: {self.config.ollama_model}\n"))
+            self.message_queue.put(("log", f"🔧 模式: {'简单' if self.config.mode == 'simple' else '完整'}\n"))
             
             if self.config.mode == "simple":
                 # 简单模式
@@ -655,7 +655,41 @@ class InvoiceOCRApp:
                             self.message_queue.put(("log", f"\n✅ Excel 报告: {output_xlsx}"))
                     except Exception as e:
                         self.message_queue.put(("log", f"\n⚠️ Excel 导出失败: {e}"))
-                        
+
+                # 生成 Markdown 报告（完整模式）
+                if self.config.enable_markdown:
+                    try:
+                        output_md = root / "invoice_summary.md"
+                        lines = [
+                            "# 📋 发票 OCR 汇总报告 (完整模式)",
+                            "",
+                            f"- 🗂️ 扫描目录：`{root}`",
+                            f"- 📊 发票总数：{analysis['total_count']} 份",
+                            f"- ✅ 有效发票：{analysis['valid_count']} 份",
+                            f"- 💰 总金额：**{analysis['total_amount']:.2f} 元**",
+                            "",
+                            "## 📝 发票明细",
+                            "",
+                            "| 序号 | 文件名 | 发票类型 | 发票号码 | 金额(元) | 开票日期 | 状态 |",
+                            "| :---: | --- | --- | --- | ---: | --- | --- |",
+                        ]
+                        for i, (path, info, errors) in enumerate(invoices, 1):
+                            status = "✓" if not errors else f"⚠ {errors[0][:20]}" if errors else "✓"
+                            invoice_type = info.type or "-"
+                            invoice_no = info.number or "-"
+                            invoice_date = info.date or "-"
+                            lines.append(
+                                f"| {i} | `{path.name}` | {invoice_type} | {invoice_no} | {info.total:.2f} | {invoice_date} | {status} |"
+                            )
+                        lines.append("")
+                        lines.append("---")
+                        from datetime import datetime
+                        lines.append(f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+                        output_md.write_text("\n".join(lines), encoding="utf-8")
+                        self.message_queue.put(("log", f"✅ Markdown 报告: {output_md}"))
+                    except Exception as e:
+                        self.message_queue.put(("log", f"⚠️ Markdown 导出失败: {e}"))
+
                 # 文件重命名
                 if self.config.enable_rename:
                     rename_ops = rename_invoice_files(invoices, rename=True)
@@ -700,12 +734,11 @@ class InvoiceOCRApp:
             self.config.ollama_port = int(self.port_var.get())
             self.config.ollama_model = self.model_var.get()
             self.config.volcengine_api_key = self.volc_api_key_var.get()
-            self.config.volcengine_endpoint = self.volc_endpoint_var.get()
             self.config.volcengine_model = self.volc_model_var.get()
             self.config.openrouter_api_key = self.or_api_key_var.get()
             self.config.openrouter_model = self.or_model_var.get()
             self.config.max_retries = int(self.retry_var.get())
-            
+
             self.save_config()
             messagebox.showinfo("成功", "设置已保存")
         except ValueError:
@@ -719,7 +752,6 @@ class InvoiceOCRApp:
         self.port_var.set(str(self.config.ollama_port))
         self.model_var.set(self.config.ollama_model)
         self.volc_api_key_var.set(self.config.volcengine_api_key)
-        self.volc_endpoint_var.set(self.config.volcengine_endpoint)
         self.volc_model_var.set(self.config.volcengine_model)
         self.or_api_key_var.set(self.config.openrouter_api_key)
         self.or_model_var.set(self.config.openrouter_model)
