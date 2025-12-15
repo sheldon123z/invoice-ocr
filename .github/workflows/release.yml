@@ -127,7 +127,7 @@ jobs:
           
           # 打包 Windows
           cd artifacts/windows
-          zip ../../InvoiceOCR-Windows.zip InvoiceOCR.exe
+          zip -r ../../InvoiceOCR-Windows.zip InvoiceOCR.exe
           cd ../..
 
       - name: Extract version from tag
