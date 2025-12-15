@@ -20,7 +20,7 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          brew install poppler python-tk@3.13
+          brew install poppler tcl-tk
 
       - name: Install Python dependencies
         run: |
@@ -38,6 +38,7 @@ jobs:
           python -m PyInstaller --name=InvoiceOCR --windowed \
             --hidden-import=invoice_ocr_sum \
             --hidden-import=invoice_ocr_simple \
+            --hidden-import=ocr_api \
             --hidden-import=openpyxl \
             --hidden-import=openpyxl.styles \
             --add-binary="$PDFTOPPM_PATH:bin" \
@@ -74,6 +75,19 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Install poppler for PDF support
+        run: |
+          # 下载 poppler for Windows
+          $url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v24.08.0-0/Release-24.08.0-0.zip"
+          $output = "poppler.zip"
+          Invoke-WebRequest -Uri $url -OutFile $output
+          Expand-Archive -Path $output -DestinationPath poppler
+          # 添加到 PATH
+          $popplerBin = "$PWD\poppler\poppler-24.08.0\Library\bin"
+          echo "$popplerBin" >> $env:GITHUB_PATH
+          echo "Poppler installed at: $popplerBin"
+        shell: pwsh
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -82,7 +96,26 @@ jobs:
 
       - name: Build Windows application
         run: |
-          pyinstaller InvoiceOCR_windows.spec
+          # 获取 poppler bin 路径
+          $popplerBin = "$PWD\poppler\poppler-24.08.0\Library\bin"
+
+          # 使用 PyInstaller 打包，包含 poppler（单文件模式）
+          python -m PyInstaller --name=InvoiceOCR --windowed --onefile `
+            --hidden-import=invoice_ocr_sum `
+            --hidden-import=invoice_ocr_simple `
+            --hidden-import=ocr_api `
+            --hidden-import=openpyxl `
+            --hidden-import=openpyxl.styles `
+            --add-binary="$popplerBin\pdftoppm.exe;bin" `
+            --add-binary="$popplerBin\pdftocairo.exe;bin" `
+            --add-binary="$popplerBin\*.dll;bin" `
+            --noconfirm `
+            invoice_ocr_gui.py
+
+          # 验证生成的文件
+          echo "Build output:"
+          Get-ChildItem -Path dist -Recurse
+        shell: pwsh
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

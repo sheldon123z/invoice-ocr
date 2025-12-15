@@ -191,14 +191,18 @@ OCR_PROVIDER = None
 
 def get_pdftoppm_path() -> str:
     """获取 pdftoppm 的路径（支持打包后的应用）"""
+    import platform
+    is_windows = platform.system() == 'Windows'
+    exe_suffix = '.exe' if is_windows else ''
+
     # 尝试多个可能的 pdftoppm 路径
     possible_paths = [
-        # PyInstaller 打包后的路径 (Frameworks/bin/pdftoppm)
-        os.path.join(getattr(sys, '_MEIPASS', ''), 'bin', 'pdftoppm'),
+        # PyInstaller 打包后的路径 (bin/pdftoppm)
+        os.path.join(getattr(sys, '_MEIPASS', ''), 'bin', f'pdftoppm{exe_suffix}'),
         # 如果是 macOS .app bundle
         os.path.join(os.path.dirname(sys.executable), '..', 'Frameworks', 'bin', 'pdftoppm'),
         # 系统 PATH
-        "pdftoppm",
+        f"pdftoppm{exe_suffix}",
         # Homebrew (M1/M2 Mac)
         "/opt/homebrew/bin/pdftoppm",
         # Homebrew (Intel Mac)
