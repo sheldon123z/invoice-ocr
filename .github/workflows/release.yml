@@ -114,9 +114,19 @@ jobs:
 
       - name: Create ZIP archives
         run: |
+          # 检查下载的文件
+          echo "Checking macOS artifact:"
+          ls -R artifacts/macos/
+          echo "Checking Windows artifact:"
+          ls -R artifacts/windows/
+          
+          # 打包 macOS - 打包整个目录内容
           cd artifacts/macos
-          zip -r ../../InvoiceOCR-macOS.zip InvoiceOCR.app
-          cd ../windows
+          zip -r ../../InvoiceOCR-macOS.zip .
+          cd ../..
+          
+          # 打包 Windows
+          cd artifacts/windows
           zip -r ../../InvoiceOCR-Windows.zip InvoiceOCR.exe
           cd ../..
 
