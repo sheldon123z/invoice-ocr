@@ -88,7 +88,7 @@ DEFAULT_PROMPT = (
     "4. 只返回JSON，不要添加任何说明文字"
 )
 
-OLLAMA_HOST = "192.168.110.XXX"填写你的服务器地址
+OLLAMA_HOST = "192.168.110.219"  # 填写你的服务器地址
 OLLAMA_PORT = 11434
 OLLAMA_MODEL = "qwen3-vl:8b"
 
