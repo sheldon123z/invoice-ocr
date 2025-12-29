@@ -59,7 +59,7 @@ jobs:
           # create-dmg --volname "Invoice OCR" --window-pos 200 120 --window-size 800 400 InvoiceOCR.dmg dist/InvoiceOCR.app
 
       - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: invoice-ocr-macos
           path: dist/InvoiceOCR.app
@@ -118,7 +118,7 @@ jobs:
         shell: pwsh
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: invoice-ocr-windows
           path: dist/InvoiceOCR.exe
