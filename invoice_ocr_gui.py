@@ -58,10 +58,13 @@ class AppConfig:
     enable_markdown: bool = True
     enable_rename: bool = False
     enable_validate: bool = True
-    
+
     # 新增功能配置
     enable_verify: bool = False  # 发票真伪验证
     enable_classify: bool = False  # 发票分类
+
+    # 自定义提示词（用于定制化报告内容或特殊要求）
+    custom_prompt: str = ""
 
 
 class InvoiceOCRApp:
@@ -194,7 +197,27 @@ class InvoiceOCRApp:
         
         # 功能说明标签
         ttk.Label(options_check_frame2, text="(完整模式生效)", foreground="gray").pack(side=tk.LEFT, padx=5)
-        
+
+        # 自定义提示词区域
+        custom_prompt_frame = ttk.LabelFrame(frame, text="🎯 自定义要求（可选）", padding=10)
+        custom_prompt_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        custom_prompt_desc = ttk.Label(
+            custom_prompt_frame,
+            text="在此输入额外的要求，将会附加到识别提示词中。例如：\"请特别注意提取备注信息\" 或 \"需要识别公司全称\"",
+            foreground="gray",
+            wraplength=800
+        )
+        custom_prompt_desc.pack(fill=tk.X, pady=(0, 5))
+
+        self.custom_prompt_var = tk.StringVar(value=self.config.custom_prompt)
+        self.custom_prompt_entry = ttk.Entry(
+            custom_prompt_frame,
+            textvariable=self.custom_prompt_var,
+            width=80
+        )
+        self.custom_prompt_entry.pack(fill=tk.X, pady=2)
+
         # 开始按钮
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -409,6 +432,8 @@ class InvoiceOCRApp:
         # 新增功能配置
         self.config.enable_verify = self.verify_var.get()
         self.config.enable_classify = self.classify_var.get()
+        # 自定义提示词
+        self.config.custom_prompt = self.custom_prompt_var.get().strip()
         # API 提供商
         self.config.provider = self.provider_var.get()
         self.config.ollama_host = self.host_var.get()
@@ -472,7 +497,7 @@ class InvoiceOCRApp:
             # 导入必要的模块并设置参数
             if self.config.mode == "simple":
                 from invoice_ocr_simple import (
-                    SIMPLE_PROMPT, iter_invoice_files, 
+                    SIMPLE_PROMPT, iter_invoice_files,
                     process_file as process_simple
                 )
                 # 更新全局配置
@@ -483,6 +508,8 @@ class InvoiceOCRApp:
                 invoice_ocr_simple.OLLAMA_MODEL = self.config.ollama_model
                 # 设置统一 Provider
                 invoice_ocr_simple.OCR_PROVIDER = provider
+                # 设置自定义提示词
+                invoice_ocr_simple.CUSTOM_PROMPT = self.config.custom_prompt
             else:
                 from invoice_ocr_sum import (
                     iter_invoice_files, process_file,
@@ -512,24 +539,32 @@ class InvoiceOCRApp:
                 # 简单模式
                 grand_total = 0.0
                 success_count = 0
-                
+                results = []  # 保存处理结果用于报告
+
+                # 显示自定义提示词信息
+                if self.config.custom_prompt:
+                    self.message_queue.put(("log", f"📝 自定义要求：{self.config.custom_prompt[:50]}{'...' if len(self.config.custom_prompt) > 50 else ''}"))
+                    self.message_queue.put(("log", ""))
+
                 for idx, path in enumerate(files, 1):
                     if not self.processing:
                         break
-                        
+
                     self.message_queue.put((
-                        "progress", 
+                        "progress",
                         (idx / len(files)) * 100
                     ))
-                    
+
                     amount, status = process_simple(path)
                     grand_total += amount
                     if amount > 0:
                         success_count += 1
-                        
+
+                    results.append((path, amount, status))
+
                     msg = f"[{idx:03d}/{len(files)}] {path.name[:40]:<40} {amount:>10.2f} 元  {status}"
                     self.message_queue.put(("log", msg))
-                    
+
                 self.message_queue.put(("log", "\n" + "=" * 80))
                 self.message_queue.put(("log", f"📊 处理完成"))
                 self.message_queue.put(("log", f"  发票总数：{len(files)}"))
@@ -539,21 +574,26 @@ class InvoiceOCRApp:
                 if self.config.enable_markdown:
                     try:
                         output_md = root / "invoice_summary.md"
+                        from datetime import datetime
                         lines = [
                             "# 📋 发票 OCR 汇总报告 (快速模式)",
+                            "",
                             f"- 🗂️ 扫描目录：`{root}`",
                             f"- 📊 发票数量：{len(files)} 份",
                             f"- ✅ 成功识别：{success_count} 份",
                             f"- 💰 总金额：**{grand_total:.2f} 元**",
                             "",
                             "## 📝 明细表",
+                            "",
                             "| 序号 | 文件 | 金额(元) | 状态 |",
-                            "| --- | --- | --- | --- |",
+                            "| :---: | --- | ---: | --- |",
                         ]
-                        # 重新遍历生成明细（简单起见，记录在日志中无法直接复用）
-                        for i, path in enumerate(files, 1):
-                            # 不重复调用 OCR，这里只展示文件列表
-                            lines.append(f"| {i} | `{path.name}` | - | - |")
+                        # 使用保存的处理结果生成明细
+                        for i, (path, amount, status) in enumerate(results, 1):
+                            lines.append(f"| {i} | `{path.name}` | {amount:.2f} | {status} |")
+                        lines.append("")
+                        lines.append("---")
+                        lines.append(f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
                         output_md.write_text("\n".join(lines), encoding="utf-8")
                         self.message_queue.put(("log", f"\n✅ Markdown 报告: {output_md}"))
                     except Exception as e:
@@ -563,16 +603,25 @@ class InvoiceOCRApp:
             else:
                 # 完整模式
                 invoices = []
-                
+
                 # 创建参数对象
                 class Args:
                     def __init__(self, config):
                         self.host = config.ollama_host
                         self.port = config.ollama_port
                         self.model = config.ollama_model
-                        self.prompt = invoice_ocr_sum.DEFAULT_PROMPT
-                        
+                        # 构建提示词：默认提示词 + 自定义提示词
+                        base_prompt = invoice_ocr_sum.DEFAULT_PROMPT
+                        if config.custom_prompt:
+                            self.prompt = f"{base_prompt}\n\n【用户额外要求】\n{config.custom_prompt}"
+                        else:
+                            self.prompt = base_prompt
+
                 args = Args(self.config)
+
+                # 显示自定义提示词信息
+                if self.config.custom_prompt:
+                    self.message_queue.put(("log", f"📝 自定义要求：{self.config.custom_prompt[:50]}..."))
                 
                 for idx, path in enumerate(files, 1):
                     if not self.processing:
@@ -675,9 +724,9 @@ class InvoiceOCRApp:
                         ]
                         for i, (path, info, errors) in enumerate(invoices, 1):
                             status = "✓" if not errors else f"⚠ {errors[0][:20]}" if errors else "✓"
-                            invoice_type = info.type or "-"
-                            invoice_no = info.number or "-"
-                            invoice_date = info.date or "-"
+                            invoice_type = info.invoice_type_name or "-"
+                            invoice_no = info.invoice_no or "-"
+                            invoice_date = info.issue_date or "-"
                             lines.append(
                                 f"| {i} | `{path.name}` | {invoice_type} | {invoice_no} | {info.total:.2f} | {invoice_date} | {status} |"
                             )
@@ -828,9 +877,10 @@ class InvoiceOCRApp:
                 else:
                     messagebox.showwarning("检查失败", "请填写 OpenRouter API Key")
         except Exception as e:
-            messagebox.showerror("连接失败", f"❌ 无法连接到服务器:\n{e}")
-            
-            if "No route to host" in str(e) or "Errno 65" in str(e):
+            error_str = str(e)
+            error_msg = f"❌ 无法连接到服务器:\n{e}\n\n可能原因：\n"
+
+            if "No route to host" in error_str or "Errno 65" in error_str:
                 error_msg += (
                     "1. 服务器地址不正确或服务器未启动\n"
                     "2. 防火墙阻止了连接\n"
@@ -840,7 +890,7 @@ class InvoiceOCRApp:
                     "• 确认服务器地址和端口正确\n"
                     "• 检查防火墙设置"
                 )
-            elif "timed out" in str(e) or "timeout" in str(e).lower():
+            elif "timed out" in error_str or "timeout" in error_str.lower():
                 error_msg += (
                     "1. 服务器响应过慢\n"
                     "2. 网络不稳定\n\n"
@@ -848,7 +898,7 @@ class InvoiceOCRApp:
                     "• 检查网络连接\n"
                     "• 稍后重试"
                 )
-            elif "Connection refused" in str(e) or "Errno 61" in str(e):
+            elif "Connection refused" in error_str or "Errno 61" in error_str:
                 error_msg += (
                     "1. Ollama 服务未运行\n"
                     "2. 端口不正确\n\n"
@@ -864,7 +914,7 @@ class InvoiceOCRApp:
                     "• 检查服务器地址和端口\n"
                     "• 确保 Ollama 服务运行中"
                 )
-            
+
             messagebox.showerror("连接失败", error_msg)
             
     def load_config(self) -> AppConfig:
