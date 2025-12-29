@@ -13,6 +13,8 @@ on:
 jobs:
   lint-and-check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,6 +22,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
+          # Python version matches the project's .python-version file (3.13)
           python-version: '3.13'
 
       - name: Install dependencies
@@ -37,12 +40,16 @@ jobs:
           python -m py_compile ocr_api.py
 
       - name: Lint with ruff
+        # Note: continue-on-error is set to true as the codebase may have existing linting issues.
+        # This allows CI to report lint warnings without failing the build during gradual cleanup.
         run: |
           ruff check --output-format=github --select=E,F,W --ignore=E501,W503 .
         continue-on-error: true
 
   dependency-check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -50,6 +57,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
+          # Python version matches the project's .python-version file (3.13)
           python-version: '3.13'
 
       - name: Install and check dependencies
