@@ -56,6 +56,9 @@ OLLAMA_MODEL = "qwen3-vl:8b"
 # 统一 OCR Provider（由 GUI 设置）
 OCR_PROVIDER = None
 
+# 自定义提示词（由 GUI 设置，会附加到默认提示词后）
+CUSTOM_PROMPT = ""
+
 
 def get_pdftoppm_path() -> str:
     """获取 pdftoppm 的路径（支持打包后的应用）"""
@@ -213,12 +216,20 @@ def iter_invoice_files(root: Path) -> Iterable[Path]:
             yield path
 
 
+def get_effective_prompt() -> str:
+    """获取有效的提示词（基础提示词 + 自定义提示词）"""
+    if CUSTOM_PROMPT:
+        return f"{SIMPLE_PROMPT}\n\n【用户额外要求】\n{CUSTOM_PROMPT}"
+    return SIMPLE_PROMPT
+
+
 def process_file(path: Path) -> Tuple[float, str]:
     """处理单个文件，返回金额和状态。"""
     try:
         # 获取处理用的图片路径
         image_path = path
         temp_png = None
+        prompt = get_effective_prompt()
 
         if path.suffix.lower() == ".pdf":
             with tempfile.TemporaryDirectory(prefix="inv_") as tmp:
@@ -230,7 +241,7 @@ def process_file(path: Path) -> Tuple[float, str]:
                     if not validate_is_invoice(image_path):
                         return 0.0, "⊘ 非发票"
 
-                    response = call_ollama_ocr(image_path, SIMPLE_PROMPT)
+                    response = call_ollama_ocr(image_path, prompt)
                     amount = parse_amount(response)
                     return amount, "✓" if amount > 0 else "⚠"
                 except Exception as e:
@@ -240,7 +251,7 @@ def process_file(path: Path) -> Tuple[float, str]:
             if not validate_is_invoice(image_path):
                 return 0.0, "⊘ 非发票"
 
-            response = call_ollama_ocr(image_path, SIMPLE_PROMPT)
+            response = call_ollama_ocr(image_path, prompt)
             amount = parse_amount(response)
             return amount, "✓" if amount > 0 else "⚠"
     except (HTTPError, URLError) as e:
