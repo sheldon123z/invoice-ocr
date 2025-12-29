@@ -147,21 +147,35 @@ jobs:
 
       - name: Create ZIP archives
         run: |
+          ROOT_DIR=$(pwd)
+
           # 检查下载的文件
           echo "Checking macOS artifact:"
           ls -R artifacts/macos/
           echo "Checking Windows artifact:"
           ls -R artifacts/windows/
           
-          # 打包 macOS - 打包整个目录内容
-          cd artifacts/macos
-          zip -r ../../InvoiceOCR-macOS.zip .
-          cd ../..
+          # 找到 macOS 应用目录（下载的 artifact 会带有一层 artifact 名称目录）
+          MAC_APP_PATH=$(find artifacts/macos -maxdepth 3 -type d -name "InvoiceOCR.app" | head -n 1)
+          if [ -z "$MAC_APP_PATH" ]; then
+            echo "macOS artifact not found (InvoiceOCR.app) under artifacts/macos"
+            exit 1
+          fi
+          MAC_APP_DIR=$(dirname "$MAC_APP_PATH")
+          cd "$MAC_APP_DIR"
+          zip -r "$ROOT_DIR/InvoiceOCR-macOS.zip" "$(basename "$MAC_APP_PATH")"
+          cd "$ROOT_DIR"
           
-          # 打包 Windows
-          cd artifacts/windows
-          zip -r ../../InvoiceOCR-Windows.zip InvoiceOCR.exe
-          cd ../..
+          # 找到 Windows 可执行文件
+          WIN_EXE_PATH=$(find artifacts/windows -maxdepth 3 -type f -name "InvoiceOCR.exe" | head -n 1)
+          if [ -z "$WIN_EXE_PATH" ]; then
+            echo "Windows artifact not found (InvoiceOCR.exe) under artifacts/windows"
+            exit 1
+          fi
+          WIN_EXE_DIR=$(dirname "$WIN_EXE_PATH")
+          cd "$WIN_EXE_DIR"
+          zip -r "$ROOT_DIR/InvoiceOCR-Windows.zip" "$(basename "$WIN_EXE_PATH")"
+          cd "$ROOT_DIR"
 
       - name: Extract version from tag
         id: get_version
