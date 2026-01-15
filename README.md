@@ -97,8 +97,10 @@ chmod +x build_linux.sh
 4. 勾选需要的选项：
    - ✅ 生成 Excel 报告
    - ✅ 文件重命名
-   - ✅ 验证发票
+   - ✅ 验证发票（⚡快速模式下建议关闭以获得最佳性能）
 5. 点击"🚀 开始处理"
+
+💡 **性能提示**：快速模式下，建议关闭"验证发票"选项，可将处理速度提升约 50%。
 
 ### 3. 查看结果
 
@@ -179,8 +181,11 @@ chmod +x build_linux.sh
 如果需要命令行版本，可以直接使用：
 
 ```bash
-# 快速模式
+# 快速模式（默认不验证，速度最快）
 python3 invoice_ocr_simple.py /path/to/invoices
+
+# 快速模式（启用验证，会降低速度）
+python3 invoice_ocr_simple.py /path/to/invoices --validate
 
 # 完整模式（带分析和报告）
 python3 invoice_ocr_sum.py /path/to/invoices --excel --rename
