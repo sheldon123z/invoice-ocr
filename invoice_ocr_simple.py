@@ -9,11 +9,12 @@
 - 调用 Ollama 提取总金额，并统计合计
 - ✅ 支持长文件名和中文命名
 - ✅ 自动跳过含有"行程单"的文件
-- ✅ 自动验证发票，跳过非发票文件
+- ✅ 可选的发票验证（默认关闭以提升速度）
 
 使用：
-  python3 invoice_ocr_simple_v2.py              # 扫描当前目录
-  python3 invoice_ocr_simple_v2.py /path/to/dir  # 扫描指定目录
+  python3 invoice_ocr_simple.py              # 扫描当前目录
+  python3 invoice_ocr_simple.py /path/to/dir  # 扫描指定目录
+  python3 invoice_ocr_simple.py --validate    # 启用发票验证（会降低速度）
 """
 
 from __future__ import annotations
@@ -58,6 +59,9 @@ OCR_PROVIDER = None
 
 # 自定义提示词（由 GUI 设置，会附加到默认提示词后）
 CUSTOM_PROMPT = ""
+
+# 是否启用发票验证（由 GUI 设置，默认关闭以提升速度）
+ENABLE_VALIDATION = False
 
 
 def get_pdftoppm_path() -> str:
@@ -237,8 +241,8 @@ def process_file(path: Path) -> Tuple[float, str]:
                     temp_png = run_pdftoppm_first_page(path, Path(tmp))
                     image_path = temp_png
 
-                    # 验证是否为发票
-                    if not validate_is_invoice(image_path):
+                    # 可选的发票验证（默认关闭以提升速度）
+                    if ENABLE_VALIDATION and not validate_is_invoice(image_path):
                         return 0.0, "⊘ 非发票"
 
                     response = call_ollama_ocr(image_path, prompt)
@@ -247,8 +251,8 @@ def process_file(path: Path) -> Tuple[float, str]:
                 except Exception as e:
                     return 0.0, f"✗ PDF处理失败"
         else:
-            # 验证是否为发票
-            if not validate_is_invoice(image_path):
+            # 可选的发票验证（默认关闭以提升速度）
+            if ENABLE_VALIDATION and not validate_is_invoice(image_path):
                 return 0.0, "⊘ 非发票"
 
             response = call_ollama_ocr(image_path, prompt)
@@ -263,7 +267,12 @@ def process_file(path: Path) -> Tuple[float, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="极简发票 OCR 汇总 - 快速识别金额（支持长文件名）")
     parser.add_argument("root", nargs="?", default=".", help="扫描目录（默认当前目录）")
+    parser.add_argument("--validate", action="store_true", help="启用发票验证（会降低速度）")
     args = parser.parse_args()
+
+    # 设置验证标志
+    global ENABLE_VALIDATION
+    ENABLE_VALIDATION = args.validate
 
     root = Path(args.root).resolve()
     if not root.exists():
@@ -275,7 +284,10 @@ def main() -> int:
         print(f"[提示] 未找到发票文件")
         return 0
 
-    print(f"共发现 {len(files)} 份发票，开始识别...\n")
+    print(f"共发现 {len(files)} 份发票，开始识别...")
+    if ENABLE_VALIDATION:
+        print("⚠️  发票验证已启用（可能会降低处理速度）")
+    print()
 
     grand_total = 0.0
     success_count = 0

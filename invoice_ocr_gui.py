@@ -57,7 +57,7 @@ class AppConfig:
     enable_excel: bool = True
     enable_markdown: bool = True
     enable_rename: bool = False
-    enable_validate: bool = True
+    enable_validate: bool = False  # 默认关闭以提升快速模式速度
 
     # 新增功能配置
     enable_verify: bool = False  # 发票真伪验证
@@ -165,7 +165,7 @@ class InvoiceOCRApp:
         
         self.validate_var = tk.BooleanVar(value=self.config.enable_validate)
         validate_check = ttk.Checkbutton(
-            options_check_frame, text="验证发票", 
+            options_check_frame, text="验证发票 (⚡快速模式下建议关闭)", 
             variable=self.validate_var
         )
         validate_check.pack(side=tk.LEFT, padx=10)
@@ -390,6 +390,7 @@ class InvoiceOCRApp:
             "4. 返回\"处理发票\"标签开始识别\n\n"
             "💡 模式选择：\n"
             "- 快速模式：仅识别发票金额，速度快\n"
+            "  ⚡ 建议关闭\"验证发票\"选项以获得最佳性能\n"
             "- 完整模式：提取完整信息，支持统计分析\n\n"
             "💾 配置会自动保存到 ~/.invoice_ocr_config.json"
         )
@@ -510,6 +511,8 @@ class InvoiceOCRApp:
                 invoice_ocr_simple.OCR_PROVIDER = provider
                 # 设置自定义提示词
                 invoice_ocr_simple.CUSTOM_PROMPT = self.config.custom_prompt
+                # 设置是否启用验证（快速模式下默认关闭以提升速度）
+                invoice_ocr_simple.ENABLE_VALIDATION = self.config.enable_validate
             else:
                 from invoice_ocr_sum import (
                     iter_invoice_files, process_file,
