@@ -12,9 +12,9 @@
 - ✅ 可选的发票验证（默认关闭以提升速度）
 
 使用：
-  python3 invoice_ocr_simple.py              # 扫描当前目录
-  python3 invoice_ocr_simple.py /path/to/dir  # 扫描指定目录
-  python3 invoice_ocr_simple.py --validate    # 启用发票验证（会降低速度）
+  python3 invoice_ocr_simple.py                      # 扫描当前目录
+  python3 invoice_ocr_simple.py /path/to/dir         # 扫描指定目录
+  python3 invoice_ocr_simple.py /path/to/dir --validate  # 启用发票验证（会降低速度）
 """
 
 from __future__ import annotations
